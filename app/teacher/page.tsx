@@ -1,6 +1,6 @@
+/* oxlint-disable next/no-html-link-for-pages */
 import { BarChart3, Download, LogOut, MessageSquareText, Timer, Users } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import Link from 'next/link';
 import { requireChatGPTUser, chatGPTSignOutPath } from '@/app/chatgpt-auth';
 import { getDb, getTeacherEmail } from '@/lib/db';
 
@@ -15,7 +15,7 @@ async function TeacherDashboard() {
   const user = await requireChatGPTUser('/teacher');
   const allowedEmail = getTeacherEmail();
   if (!allowedEmail || user.email.toLowerCase() !== allowedEmail) {
-    return <main className="grid min-h-screen place-items-center px-5"><div className="max-w-lg rounded-3xl border border-[#e4c8b1] bg-white p-8 text-center shadow-soft"><h1 className="serif text-3xl font-bold text-[#d94f08]">教师页面未授权</h1><p className="mt-3 leading-7 text-[#687168]">此账号不能查看学生练习数据。请使用课程教师的 ChatGPT 账号登录。</p><Link href={chatGPTSignOutPath('/teacher')} target="_top" className="mt-5 inline-flex rounded-xl bg-[#416b36] px-5 py-3 font-bold text-white">退出并重新登录</Link></div></main>;
+    return <main className="grid min-h-screen place-items-center px-5"><div className="max-w-lg rounded-3xl border border-[#e4c8b1] bg-white p-8 text-center shadow-soft"><h1 className="serif text-3xl font-bold text-[#d94f08]">教师页面未授权</h1><p className="mt-3 leading-7 text-[#687168]">此账号不能查看学生练习数据。请使用课程教师的 ChatGPT 账号登录。</p><a href={chatGPTSignOutPath('/teacher')} target="_top" className="mt-5 inline-flex rounded-xl bg-[#416b36] px-5 py-3 font-bold text-white">退出并重新登录</a></div></main>;
   }
 
   const result = await getDb().prepare(`
@@ -38,7 +38,7 @@ async function TeacherDashboard() {
 
   return (
     <main className="min-h-screen pb-16">
-      <header className="glass sticky top-0 z-20 border-b border-[#ecd3bf]"><div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4"><div><p className="text-xs font-black uppercase tracking-[.16em] text-[#416b36]">July English Lab</p><h1 className="serif text-2xl font-bold text-[#d94f08]">教师口语数据看板</h1></div><div className="flex gap-2"><Link href="/api/attempts/export" className="inline-flex items-center gap-2 rounded-xl bg-[#416b36] px-4 py-2.5 text-sm font-bold text-white"><Download className="h-4 w-4" /> 导出CSV</Link><Link href={chatGPTSignOutPath('/teacher')} target="_top" className="grid h-10 w-10 place-items-center rounded-xl border border-[#dec8b4] bg-white text-[#687168]" aria-label="退出"><LogOut className="h-4 w-4" /></Link></div></div></header>
+      <header className="glass sticky top-0 z-20 border-b border-[#ecd3bf]"><div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4"><div><p className="text-xs font-black uppercase tracking-[.16em] text-[#416b36]">July English Lab</p><h1 className="serif text-2xl font-bold text-[#d94f08]">教师口语数据看板</h1></div><div className="flex gap-2"><a href="/api/attempts/export" className="inline-flex items-center gap-2 rounded-xl bg-[#416b36] px-4 py-2.5 text-sm font-bold text-white"><Download className="h-4 w-4" /> 导出CSV</a><a href={chatGPTSignOutPath('/teacher')} target="_top" className="grid h-10 w-10 place-items-center rounded-xl border border-[#dec8b4] bg-white text-[#687168]" aria-label="退出"><LogOut className="h-4 w-4" /></a></div></div></header>
       <section className="mx-auto max-w-7xl px-5 pt-8">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {metrics.map(({ Icon, value, label }) => <div key={label} className="rounded-3xl border border-[#e6d2c1] bg-white/90 p-5 shadow-soft"><Icon className="h-5 w-5 text-[#ea5a0b]" /><p className="mt-4 text-3xl font-black text-[#273327]">{value}</p><p className="mt-1 text-sm text-[#687168]">{label}</p></div>)}

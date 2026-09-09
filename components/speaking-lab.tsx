@@ -1,7 +1,7 @@
 'use client';
+/* oxlint-disable next/no-html-link-for-pages */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
 import { ArrowLeft, BarChart3, Check, ChevronRight, CircleHelp, Headphones, Keyboard, Mic, Play, RotateCcw, Send, Sparkles, Square, Volume2 } from 'lucide-react';
 import { scenes, type SceneId } from '@/lib/scenes';
 
@@ -159,7 +159,7 @@ export function SpeakingLab() {
       <header className="glass sticky top-0 z-30 border-b border-[#ecd3bf]">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-2xl bg-[#ea5a0b] text-xl font-bold text-white shadow-lg shadow-orange-200">J</div><div><p className="serif text-lg font-bold leading-tight text-[#c94a07]">July English Lab</p><p className="text-xs text-[#687168]">Campus Scene Talk · 公共英语1</p></div></div>
-          <Link href="/teacher" className="focus-ring inline-flex items-center gap-2 rounded-full border border-[#d8b89d] bg-white px-4 py-2 text-sm font-semibold text-[#416b36] shadow-sm hover:bg-[#fff7ef]"><BarChart3 className="h-4 w-4" /> 教师数据</Link>
+          <a href="/teacher" className="focus-ring inline-flex items-center gap-2 rounded-full border border-[#d8b89d] bg-white px-4 py-2 text-sm font-semibold text-[#416b36] shadow-sm hover:bg-[#fff7ef]"><BarChart3 className="h-4 w-4" /> 教师数据</a>
         </div>
       </header>
 
