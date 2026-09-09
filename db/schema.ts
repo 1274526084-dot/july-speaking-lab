@@ -12,6 +12,13 @@ export const speakingAttempts = sqliteTable('speaking_attempts', {
   confidence: integer('confidence'),
   durationSeconds: integer('duration_seconds').notNull(),
   attempts: integer('attempts').notNull(),
+  taskScore: integer('task_score'),
+  sentenceScore: integer('sentence_score'),
+  clarityScore: integer('clarity_score'),
+  interactionScore: integer('interaction_score'),
+  totalScore: integer('total_score'),
+  feedback: text('feedback'),
+  audioManifest: text('audio_manifest'),
   submittedAt: integer('submitted_at').notNull(),
 }, (table) => [
   index('idx_attempts_submitted_at').on(table.submittedAt),
