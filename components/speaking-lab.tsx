@@ -79,6 +79,8 @@ export function SpeakingLab() {
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const confidenceRef = useRef<number | null>(null);
+  const finalTranscriptRef = useRef('');
+  const recognitionShouldRunRef = useRef(false);
   const stoppingRef = useRef<Promise<Blob | null> | null>(null);
 
   const shadowScene = scenes.find((item) => item.id === shadowSceneId) ?? scenes[0];
@@ -103,8 +105,11 @@ export function SpeakingLab() {
 
   const clipUrls = useMemo(() => recordings.map((clip) => ({ round: clip.round, url: URL.createObjectURL(clip.blob) })), [recordings]);
   useEffect(() => () => clipUrls.forEach((clip) => URL.revokeObjectURL(clip.url)), [clipUrls]);
+  const pendingClipUrl = useMemo(() => pendingClip ? URL.createObjectURL(pendingClip) : '', [pendingClip]);
+  useEffect(() => () => { if (pendingClipUrl) URL.revokeObjectURL(pendingClipUrl); }, [pendingClipUrl]);
 
   const releaseStream = useCallback(() => {
+    recognitionShouldRunRef.current = false;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     recorderRef.current = null;
@@ -115,7 +120,8 @@ export function SpeakingLab() {
     if (stoppingRef.current) return stoppingRef.current;
     const recorder = recorderRef.current;
     if (!recorder) return null;
-    recognitionRef.current?.stop();
+    recognitionShouldRunRef.current = false;
+    try { recognitionRef.current?.stop(); } catch { /* recognition may already be between sessions */ }
     recognitionRef.current = null;
     const promise = new Promise<Blob | null>((resolve) => {
       recorder.onstop = () => {
@@ -140,8 +146,10 @@ export function SpeakingLab() {
     if (isRecording) return;
     setPendingClip(null);
     setDraft('');
-    setNotice('正在录音，请回答系统的问题……');
+    setNotice('正在录音……请说完整后，再手动点击“结束回答”。');
     confidenceRef.current = null;
+    finalTranscriptRef.current = '';
+    recognitionShouldRunRef.current = true;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -163,22 +171,38 @@ export function SpeakingLab() {
       const recognition = new Recognition();
       recognition.lang = 'en-US';
       recognition.interimResults = true;
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.maxAlternatives = 1;
       recognition.onresult = (event) => {
-        let text = '';
+        let finalText = finalTranscriptRef.current;
+        let interimText = '';
         let confidence = 0;
         for (let index = event.resultIndex; index < event.results.length; index += 1) {
-          text += event.results[index][0].transcript;
+          const transcript = event.results[index][0].transcript.trim();
+          if (event.results[index].isFinal) finalText = `${finalText} ${transcript}`.trim();
+          else interimText = `${interimText} ${transcript}`.trim();
           confidence = Math.max(confidence, Number(event.results[index][0].confidence || 0));
         }
-        setDraft(text.trim());
+        finalTranscriptRef.current = finalText;
+        setDraft(`${finalText} ${interimText}`.trim());
         if (confidence > 0) confidenceRef.current = confidence;
       };
       recognition.onerror = (event: RecognitionErrorEvent) => {
-        setNotice(event.error === 'not-allowed' ? '麦克风权限未开启，请允许访问后重试。' : '文字没有完全识别，可结束录音后手动修改。');
+        if (event.error === 'not-allowed') {
+          recognitionShouldRunRef.current = false;
+          setNotice('语音转文字权限未开启，但录音仍在继续。结束后可以手动输入回答。');
+        }
+        else if (event.error !== 'no-speech') setNotice('录音仍在继续。文字没有完全识别，结束后可以手动修改。');
       };
-      recognition.onend = () => { if (recorderRef.current?.state === 'recording') void finishRecording(); };
+      recognition.onend = () => {
+        if (!recognitionShouldRunRef.current || recorderRef.current?.state !== 'recording') return;
+        try {
+          recognition.start();
+          setNotice('录音仍在继续……请说完整后，再手动点击“结束回答”。');
+        } catch {
+          setNotice('录音仍在继续。说完后请手动结束；识别文字可以稍后修改。');
+        }
+      };
       recognitionRef.current = recognition;
       recognition.start();
     } catch {
@@ -186,7 +210,7 @@ export function SpeakingLab() {
       setIsRecording(false);
       setNotice('无法使用麦克风。请在浏览器地址栏允许麦克风后重试。');
     }
-  }, [finishRecording, isRecording, releaseStream]);
+  }, [isRecording, releaseStream]);
 
   useEffect(() => () => {
     if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
@@ -318,7 +342,7 @@ export function SpeakingLab() {
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-bold text-[#416b36]">Step 3 · Question and Answer</p><h1 className="serif text-3xl font-bold text-[#d94f08]">{scene.number} · {scene.titleZh}</h1></div><button onClick={() => { releaseStream(); setStage('choose'); }} className="focus-ring inline-flex items-center gap-1 rounded-full border border-[#dac5b3] bg-white px-4 py-2 text-sm font-bold text-[#687168]"><ArrowLeft className="h-4 w-4" /> 换场景</button></div>
             <div className="grid gap-5 lg:grid-cols-[1.05fr_.95fr]">
               <div className="rounded-[28px] border border-[#dfcabb] bg-white p-5 shadow-soft"><div className="flex items-center justify-between border-b border-[#eee0d4] pb-3"><div><p className="font-bold">系统搭档</p><p className="text-xs text-[#687168]">根据你的回答继续追问 · 共3轮</p></div><button onClick={() => speak(messages.filter((message) => message.role === 'partner').at(-1)?.text ?? scene.opening)} className="focus-ring inline-flex items-center gap-2 rounded-full bg-[#e7f1e4] px-3 py-2 text-sm font-bold text-[#416b36]"><Volume2 className="h-4 w-4" /> 再听一次</button></div><div className="mt-4 min-h-80 space-y-3">{messages.map((message, index) => <div key={`${message.role}-${index}`} className={`flex ${message.role === 'student' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[86%] rounded-2xl px-4 py-3 leading-7 ${message.role === 'student' ? 'bg-[#ea5a0b] text-white' : 'bg-[#e7f1e4] text-[#31542a]'}`}><p className="mb-0.5 text-xs font-black opacity-65">{message.role === 'student' ? 'YOU' : message.adaptive ? 'PARTNER · 根据你的回答' : 'PARTNER'}</p>{message.text}</div></div>)}</div></div>
-              <aside className="rounded-[28px] border border-[#cbdcc8] bg-[#f5faf2] p-5 shadow-soft"><p className="text-sm font-bold text-[#416b36]">ROUND {turn + 1} / {scene.turns.length}</p><h2 className="serif mt-1 text-2xl font-bold">{currentTurn.prompt}</h2><div className="mt-4 rounded-2xl bg-white p-4"><p className="text-xs font-black text-[#ea5a0b]">小提示 · 可直接模仿</p><p className="mt-2 text-xl font-semibold leading-8">{currentTurn.frame}</p><button onClick={() => speak(currentTurn.example)} className="focus-ring mt-3 inline-flex items-center gap-2 text-sm font-bold text-[#416b36]"><Play className="h-4 w-4" /> 例句：{currentTurn.example}</button></div><div className="mt-4 rounded-2xl border border-[#ddc8b6] bg-white p-3"><textarea rows={3} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="语音识别文字会出现在这里，也可以修改……" className="focus-ring w-full resize-none border-0 bg-transparent p-1 outline-none" /><p aria-live="polite" className="mt-1 min-h-5 text-xs text-[#7b746c]">{notice || '点击麦克风开始回答，结束后检查文字。'}</p><div className="mt-3 flex items-center justify-between gap-3"><button onClick={isRecording ? () => void finishRecording() : () => void startRecording()} className={`focus-ring inline-flex items-center gap-2 rounded-xl px-4 py-3 font-bold text-white ${isRecording ? 'bg-[#b73523]' : 'bg-[#ea5a0b]'}`}>{isRecording ? <><Square className="h-4 w-4 fill-current" /> 结束回答</> : <><Mic className="h-5 w-5" /> 开始回答</>}</button><button disabled={!draft.trim() || !pendingClip || isRecording} onClick={sendAnswer} className="focus-ring inline-flex items-center gap-2 rounded-xl bg-[#416b36] px-4 py-3 font-bold text-white disabled:opacity-35"><Send className="h-4 w-4" /> 发送本轮</button></div></div>{pendingClip && <p className="mt-3 flex items-center gap-2 text-sm font-bold text-[#23748d]"><Check className="h-4 w-4" /> 本轮录音已保存，发送后进入下一问。</p>}</aside>
+              <aside className="rounded-[28px] border border-[#cbdcc8] bg-[#f5faf2] p-5 shadow-soft"><p className="text-sm font-bold text-[#416b36]">ROUND {turn + 1} / {scene.turns.length}</p><h2 className="serif mt-1 text-2xl font-bold">{currentTurn.prompt}</h2><div className="mt-4 rounded-2xl bg-white p-4"><p className="text-xs font-black text-[#ea5a0b]">小提示 · 可直接模仿</p><p className="mt-2 text-xl font-semibold leading-8">{currentTurn.frame}</p><button onClick={() => speak(currentTurn.example)} className="focus-ring mt-3 inline-flex items-center gap-2 text-sm font-bold text-[#416b36]"><Play className="h-4 w-4" /> 例句：{currentTurn.example}</button></div><div className="mt-4 rounded-2xl border border-[#ddc8b6] bg-white p-3"><textarea rows={3} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="语音识别文字会出现在这里，也可以修改……" className="focus-ring w-full resize-none border-0 bg-transparent p-1 outline-none" /><p aria-live="polite" className="mt-1 min-h-5 text-xs text-[#7b746c]">{notice || '点击麦克风开始回答。系统不会自动提交，请说完后手动结束。'}</p>{pendingClipUrl && <div className="mt-3 rounded-xl bg-[#edf6f8] p-3"><p className="mb-2 text-sm font-bold text-[#23748d]">先听一遍自己的回答</p><audio controls preload="metadata" src={pendingClipUrl} className="w-full" /></div>}<div className="mt-3 flex flex-wrap items-center justify-between gap-3">{pendingClip ? <><button onClick={() => void startRecording()} className="focus-ring inline-flex items-center gap-2 rounded-xl border border-[#d8b89d] bg-white px-4 py-3 font-bold text-[#b94a10]"><RotateCcw className="h-4 w-4" /> 重新录音</button><button disabled={!draft.trim()} onClick={sendAnswer} className="focus-ring inline-flex items-center gap-2 rounded-xl bg-[#416b36] px-4 py-3 font-bold text-white disabled:opacity-35"><Send className="h-4 w-4" /> 确认并进入下一问</button></> : <button onClick={isRecording ? () => void finishRecording() : () => void startRecording()} className={`focus-ring inline-flex items-center gap-2 rounded-xl px-4 py-3 font-bold text-white ${isRecording ? 'bg-[#b73523]' : 'bg-[#ea5a0b]'}`}>{isRecording ? <><Square className="h-4 w-4 fill-current" /> 结束回答</> : <><Mic className="h-5 w-5" /> 开始回答</>}</button>}</div></div>{pendingClip && <p className="mt-3 flex items-center gap-2 text-sm font-bold text-[#23748d]"><Check className="h-4 w-4" /> 满意后再确认；不满意可以重新录。</p>}</aside>
             </div>
           </section>
         )}
