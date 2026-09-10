@@ -8,12 +8,15 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
+    "dev:mainland": "vite --config vite.mainland.config.ts",
+    "build:mainland": "vite build --config vite.mainland.config.ts",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint app components/speaking-lab.tsx lib db",
     "format": "oxfmt",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@edgeone/pages-blob": "0.0.16",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-server-dom-webpack": "19.2.6",
