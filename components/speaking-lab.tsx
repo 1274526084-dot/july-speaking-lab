@@ -3,11 +3,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, BarChart3, Check, ChevronRight, Mic, Play, RotateCcw, Send, Square, UploadCloud, Volume2 } from 'lucide-react';
+import { getAdaptiveReply } from '@/lib/adaptive-reply';
 import { scenes, type PracticeTurn, type SceneId } from '@/lib/scenes';
 
 type Profile = { name: string; studentId: string; className: string };
 type Stage = 'shadow' | 'choose' | 'practice' | 'result';
-type Message = { role: 'student' | 'partner'; text: string };
+type Message = { role: 'student' | 'partner'; text: string; adaptive?: boolean };
 type AudioClip = { round: number; blob: Blob };
 type RoundScore = { task: number; sentence: number; clarity: number; note: string };
 type Submission = { ok: boolean; id?: string; error?: string };
@@ -212,22 +213,27 @@ export function SpeakingLab() {
     const text = draft.trim();
     if (!text || !pendingClip) return;
     const score = evaluateTurn(text, currentTurn, confidenceRef.current);
+    const adaptiveReply = getAdaptiveReply(scene.id, turn, text);
     setScores((previous) => [...previous, score]);
     setRecordings((previous) => [...previous.filter((clip) => clip.round !== turn + 1), { round: turn + 1, blob: pendingClip }]);
-    setMessages((previous) => [...previous, { role: 'student', text }, { role: 'partner', text: currentTurn.reply }]);
+    setMessages((previous) => [...previous, { role: 'student', text }, { role: 'partner', text: adaptiveReply, adaptive: true }]);
     setDraft('');
     setPendingClip(null);
     confidenceRef.current = null;
-    speak(currentTurn.reply);
+    speak(adaptiveReply);
     if (turn + 1 >= scene.turns.length) setStage('result');
     else setTurn((value) => value + 1);
-  }, [currentTurn, draft, pendingClip, scene.turns.length, turn]);
+  }, [currentTurn, draft, pendingClip, scene.id, scene.turns.length, turn]);
 
   const submitResult = useCallback(async () => {
     if (isUploading || recordings.length !== scene.turns.length) return;
     setIsUploading(true);
     setSubmission(null);
-    const studentLines = messages.filter((message) => message.role === 'student').map((message, index) => `Round ${index + 1}: ${message.text}`).join('\n');
+    let round = 0;
+    const dialogue = messages.map((message) => {
+      if (message.role === 'student') round += 1;
+      return `${message.role === 'student' ? `Student · Round ${round}` : 'Partner'}: ${message.text}`;
+    }).join('\n');
     const confidences = scores.map((item) => item.clarity / 20);
     const form = new FormData();
     form.set('payload', JSON.stringify({
@@ -236,7 +242,7 @@ export function SpeakingLab() {
       className: profile.className,
       sceneId: scene.id,
       sceneTitle: scene.title,
-      transcript: studentLines,
+      transcript: dialogue,
       coverage: Math.round((result.task / 40) * 100),
       confidence: Math.round((confidences.reduce((sum, value) => sum + value, 0) / Math.max(1, confidences.length)) * 100),
       durationSeconds: Math.max(1, Math.round((Date.now() - startedAt) / 1000)),
@@ -311,7 +317,7 @@ export function SpeakingLab() {
           <section>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-bold text-[#416b36]">Step 3 · Question and Answer</p><h1 className="serif text-3xl font-bold text-[#d94f08]">{scene.number} · {scene.titleZh}</h1></div><button onClick={() => { releaseStream(); setStage('choose'); }} className="focus-ring inline-flex items-center gap-1 rounded-full border border-[#dac5b3] bg-white px-4 py-2 text-sm font-bold text-[#687168]"><ArrowLeft className="h-4 w-4" /> 换场景</button></div>
             <div className="grid gap-5 lg:grid-cols-[1.05fr_.95fr]">
-              <div className="rounded-[28px] border border-[#dfcabb] bg-white p-5 shadow-soft"><div className="flex items-center justify-between border-b border-[#eee0d4] pb-3"><div><p className="font-bold">系统搭档</p><p className="text-xs text-[#687168]">问一句，你答一句 · 共3轮</p></div><button onClick={() => speak(messages.filter((message) => message.role === 'partner').at(-1)?.text ?? scene.opening)} className="focus-ring inline-flex items-center gap-2 rounded-full bg-[#e7f1e4] px-3 py-2 text-sm font-bold text-[#416b36]"><Volume2 className="h-4 w-4" /> 再听一次</button></div><div className="mt-4 min-h-80 space-y-3">{messages.map((message, index) => <div key={`${message.role}-${index}`} className={`flex ${message.role === 'student' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[86%] rounded-2xl px-4 py-3 leading-7 ${message.role === 'student' ? 'bg-[#ea5a0b] text-white' : 'bg-[#e7f1e4] text-[#31542a]'}`}><p className="mb-0.5 text-xs font-black opacity-65">{message.role === 'student' ? 'YOU' : 'PARTNER'}</p>{message.text}</div></div>)}</div></div>
+              <div className="rounded-[28px] border border-[#dfcabb] bg-white p-5 shadow-soft"><div className="flex items-center justify-between border-b border-[#eee0d4] pb-3"><div><p className="font-bold">系统搭档</p><p className="text-xs text-[#687168]">根据你的回答继续追问 · 共3轮</p></div><button onClick={() => speak(messages.filter((message) => message.role === 'partner').at(-1)?.text ?? scene.opening)} className="focus-ring inline-flex items-center gap-2 rounded-full bg-[#e7f1e4] px-3 py-2 text-sm font-bold text-[#416b36]"><Volume2 className="h-4 w-4" /> 再听一次</button></div><div className="mt-4 min-h-80 space-y-3">{messages.map((message, index) => <div key={`${message.role}-${index}`} className={`flex ${message.role === 'student' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[86%] rounded-2xl px-4 py-3 leading-7 ${message.role === 'student' ? 'bg-[#ea5a0b] text-white' : 'bg-[#e7f1e4] text-[#31542a]'}`}><p className="mb-0.5 text-xs font-black opacity-65">{message.role === 'student' ? 'YOU' : message.adaptive ? 'PARTNER · 根据你的回答' : 'PARTNER'}</p>{message.text}</div></div>)}</div></div>
               <aside className="rounded-[28px] border border-[#cbdcc8] bg-[#f5faf2] p-5 shadow-soft"><p className="text-sm font-bold text-[#416b36]">ROUND {turn + 1} / {scene.turns.length}</p><h2 className="serif mt-1 text-2xl font-bold">{currentTurn.prompt}</h2><div className="mt-4 rounded-2xl bg-white p-4"><p className="text-xs font-black text-[#ea5a0b]">小提示 · 可直接模仿</p><p className="mt-2 text-xl font-semibold leading-8">{currentTurn.frame}</p><button onClick={() => speak(currentTurn.example)} className="focus-ring mt-3 inline-flex items-center gap-2 text-sm font-bold text-[#416b36]"><Play className="h-4 w-4" /> 例句：{currentTurn.example}</button></div><div className="mt-4 rounded-2xl border border-[#ddc8b6] bg-white p-3"><textarea rows={3} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="语音识别文字会出现在这里，也可以修改……" className="focus-ring w-full resize-none border-0 bg-transparent p-1 outline-none" /><p aria-live="polite" className="mt-1 min-h-5 text-xs text-[#7b746c]">{notice || '点击麦克风开始回答，结束后检查文字。'}</p><div className="mt-3 flex items-center justify-between gap-3"><button onClick={isRecording ? () => void finishRecording() : () => void startRecording()} className={`focus-ring inline-flex items-center gap-2 rounded-xl px-4 py-3 font-bold text-white ${isRecording ? 'bg-[#b73523]' : 'bg-[#ea5a0b]'}`}>{isRecording ? <><Square className="h-4 w-4 fill-current" /> 结束回答</> : <><Mic className="h-5 w-5" /> 开始回答</>}</button><button disabled={!draft.trim() || !pendingClip || isRecording} onClick={sendAnswer} className="focus-ring inline-flex items-center gap-2 rounded-xl bg-[#416b36] px-4 py-3 font-bold text-white disabled:opacity-35"><Send className="h-4 w-4" /> 发送本轮</button></div></div>{pendingClip && <p className="mt-3 flex items-center gap-2 text-sm font-bold text-[#23748d]"><Check className="h-4 w-4" /> 本轮录音已保存，发送后进入下一问。</p>}</aside>
             </div>
           </section>
