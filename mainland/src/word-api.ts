@@ -57,6 +57,8 @@ export type WordItem = {
   audioUrl?: string;
   audio_file_id?: string;
   audio_type?: string;
+  audio_source?: string;
+  source_url?: string;
 };
 
 export type WordUnit = {
