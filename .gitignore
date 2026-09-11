@@ -38,3 +38,13 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+
+# local deployment tools and generated staging files
+/.cloudbase-cli/
+/.cloudbase-home/
+/.npm-cache/
+/.edgeone/
+/.edgeone-expired-*/
+/.edgeone-upload/
+/.tef_dist/
+/*.zip

@@ -1,8 +1,9 @@
 /* oxlint-disable next/no-html-link-for-pages, jsx-a11y/media-has-caption */
 import { BarChart3, Download, Headphones, LoaderCircle, LogOut, MessageSquareText, Search, Users, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { clearTeacherToken, cloudbaseRequest, getTeacherToken, sitePath } from './api';
 
-type AudioMeta = { key: string; type: string; size: number; round: number };
+type AudioMeta = { key: string; type: string; size: number; round: number; url?: string };
 
 type AttemptRow = {
   id: string;
@@ -48,17 +49,18 @@ export function TeacherApp() {
   const [classKeyword, setClassKeyword] = useState('');
 
   useEffect(() => {
-    void fetch('/api/attempts', { credentials: 'same-origin', cache: 'no-store' })
-      .then(async (response) => {
-        if (response.status === 401) {
-          window.location.replace('/teacher/login/');
-          return null;
-        }
-        if (!response.ok) throw new Error('load failed');
-        return response.json() as Promise<{ rows: AttemptRow[] }>;
-      })
+    const token = getTeacherToken();
+    if (!token) {
+      window.location.replace(sitePath('teacher/login'));
+      return;
+    }
+    void cloudbaseRequest<{ rows: AttemptRow[] }>('list', {}, token)
       .then((payload) => { if (payload) setRows(payload.rows || []); })
-      .catch(() => setError('学生数据暂时无法加载，请稍后刷新。'))
+      .catch(() => {
+        setError('登录已失效，正在返回登录页。');
+        clearTeacherToken();
+        window.location.replace(sitePath('teacher/login'));
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -80,8 +82,36 @@ export function TeacherApp() {
     : 0;
 
   async function logout() {
-    await fetch('/api/teacher-logout', { method: 'POST', credentials: 'same-origin' }).catch(() => undefined);
-    window.location.replace('/teacher/login/');
+    const token = getTeacherToken();
+    if (token) await cloudbaseRequest('logout', {}, token).catch(() => undefined);
+    clearTeacherToken();
+    window.location.replace(sitePath('teacher/login'));
+  }
+
+  function exportCsv() {
+    const cell = (value: unknown) => {
+      const text = value == null
+        ? ''
+        : typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+          ? String(value)
+          : JSON.stringify(value);
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+    const headers = ['提交时间', '姓名', '学号', '班级', '场景', '任务信息/40', '句型使用/30', '识别清晰度/20', '话轮完成/10', '总分/100', '用时秒', '录制次数', '对话文本', '系统建议', '录音状态'];
+    const lines = rows.map((row) => [
+      new Date(row.submitted_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+      row.student_name, row.student_id, row.class_name, row.scene_title,
+      row.task_score, row.sentence_score, row.clarity_score, row.interaction_score, row.total_score,
+      row.duration_seconds, row.attempts, row.transcript, row.feedback,
+      parseAudio(row.audio_manifest).length ? '有录音' : '无录音',
+    ].map(cell).join(','));
+    const blob = new Blob([`\uFEFF${[headers.map(cell).join(','), ...lines].join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `speaking-attempts-${new Date().toISOString().slice(0, 10)}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -90,7 +120,7 @@ export function TeacherApp() {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-5 py-4">
           <div><p className="text-xs font-black uppercase tracking-[.16em] text-[#416b36]">July English Lab</p><h1 className="serif text-2xl font-bold text-[#d94f08]">教师口语数据</h1></div>
           <div className="flex gap-2">
-            <a href="/api/export" className="focus-ring inline-flex items-center gap-2 rounded-xl bg-[#416b36] px-4 py-2.5 text-sm font-bold text-white"><Download className="h-4 w-4" /> <span className="hidden sm:inline">导出CSV</span></a>
+            <button type="button" onClick={exportCsv} className="focus-ring inline-flex items-center gap-2 rounded-xl bg-[#416b36] px-4 py-2.5 text-sm font-bold text-white"><Download className="h-4 w-4" /> <span className="hidden sm:inline">导出CSV</span></button>
             <button onClick={() => void logout()} className="focus-ring grid h-10 w-10 place-items-center rounded-xl border border-[#dec8b4] bg-white text-[#687168]" aria-label="退出教师端"><LogOut className="h-4 w-4" /></button>
           </div>
         </div>
@@ -142,7 +172,7 @@ export function TeacherApp() {
                     <td className="px-4 py-4">{row.class_name}</td><td className="px-4 py-4 font-bold text-[#416b36]">{row.scene_title}</td>
                     <td className="px-4 py-4 text-xl font-black text-[#d94f08]">{row.total_score ?? '—'}</td>
                     <td className="whitespace-nowrap px-4 py-4 leading-6">任务 {row.task_score ?? '—'}/40<br />句型 {row.sentence_score ?? '—'}/30<br />清晰 {row.clarity_score ?? '—'}/20<br />话轮 {row.interaction_score ?? '—'}/10</td>
-                    <td className="min-w-72 px-4 py-4"><div className="space-y-2">{clips.length ? clips.map((clip, index) => <div key={clip.key} className="flex items-center gap-2"><span className="w-12 text-xs font-bold">第{clip.round}轮</span><audio controls preload="none" src={`/api/audio?attempt=${encodeURIComponent(row.id)}&clip=${index}`} className="h-9 w-52" /></div>) : <span className="text-[#8a837c]">无录音</span>}</div></td>
+                    <td className="min-w-72 px-4 py-4"><div className="space-y-2">{clips.length ? clips.map((clip) => <div key={clip.key} className="flex items-center gap-2"><span className="w-12 text-xs font-bold">第{clip.round}轮</span>{clip.url ? <audio controls preload="none" src={clip.url} className="h-9 w-52" /> : <span className="text-xs text-[#8a837c]">链接已过期，请刷新</span>}</div>) : <span className="text-[#8a837c]">无录音</span>}</div></td>
                     <td className="max-w-md whitespace-pre-line px-4 py-4 leading-6 text-[#59645a]">{row.transcript}</td><td className="max-w-sm px-4 py-4 leading-6 text-[#59645a]">{row.feedback || '—'}</td>
                   </tr>;
                 })}</tbody>

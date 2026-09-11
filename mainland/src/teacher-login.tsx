@@ -1,6 +1,7 @@
 /* oxlint-disable next/no-html-link-for-pages */
 import { KeyRound, LoaderCircle, LockKeyhole, ShieldCheck } from 'lucide-react';
 import { type SyntheticEvent, useEffect, useState } from 'react';
+import { cloudbaseRequest, getTeacherToken, setTeacherToken, sitePath } from './api';
 
 export function TeacherLogin() {
   const [password, setPassword] = useState('');
@@ -8,9 +9,11 @@ export function TeacherLogin() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    void fetch('/api/attempts', { credentials: 'same-origin' }).then((response) => {
-      if (response.ok) window.location.replace('/teacher/');
-    }).catch(() => undefined);
+    const token = getTeacherToken();
+    if (!token) return;
+    void cloudbaseRequest<{ ok: boolean }>('session', {}, token)
+      .then(() => window.location.replace(sitePath('teacher')))
+      .catch(() => undefined);
   }, []);
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
@@ -19,20 +22,15 @@ export function TeacherLogin() {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/teacher-login', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ password }),
-      });
-      const payload = await response.json() as { ok?: boolean; error?: string };
-      if (!response.ok || !payload.ok) {
-        setError(payload.error || '密码不正确，请重试。');
+      const payload = await cloudbaseRequest<{ ok: boolean; token?: string }>('teacherLogin', { password });
+      if (!payload.ok || !payload.token) {
+        setError('密码不正确，请重试。');
         return;
       }
-      window.location.replace('/teacher/');
-    } catch {
-      setError('暂时无法登录，请检查网络后重试。');
+      setTeacherToken(payload.token);
+      window.location.replace(sitePath('teacher'));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : '暂时无法登录，请检查网络后重试。');
     } finally {
       setLoading(false);
     }
@@ -74,7 +72,7 @@ export function TeacherLogin() {
             {loading ? '正在验证…' : '进入教师数据端'}
           </button>
 
-          <a href="/student/" className="focus-ring block rounded-xl py-2 text-center text-sm font-bold text-[#23748d]">返回学生练习</a>
+          <a href={sitePath('student')} className="focus-ring block rounded-xl py-2 text-center text-sm font-bold text-[#23748d]">返回学生练习</a>
         </form>
       </section>
     </main>

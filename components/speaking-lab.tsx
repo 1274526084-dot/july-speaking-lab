@@ -23,6 +23,12 @@ type RecognitionInstance = {
   start(): void; stop(): void;
 };
 type RecognitionConstructor = new () => RecognitionInstance;
+type SpeakingLabProps = {
+  apiMode?: 'form' | 'cloudbase';
+  apiUrl?: string;
+  assetBase?: string;
+  teacherHref?: string;
+};
 
 const steps = [['1', '跟读'], ['2', '选场景'], ['3', '模拟对话'], ['4', '结果上传']];
 
@@ -55,7 +61,16 @@ function speak(text: string) {
   window.speechSynthesis.speak(utterance);
 }
 
-export function SpeakingLab() {
+function blobToBase64(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result.split(',')[1] || '' : '');
+    reader.readAsDataURL(blob);
+  });
+}
+
+export function SpeakingLab({ apiMode = 'form', apiUrl = '/api/attempts', assetBase = '', teacherHref = '/teacher' }: SpeakingLabProps = {}) {
   const [stage, setStage] = useState<Stage>('shadow');
   const [shadowSceneId, setShadowSceneId] = useState<SceneId>('dormitory');
   const [sceneId, setSceneId] = useState<SceneId>('dormitory');
@@ -154,7 +169,7 @@ export function SpeakingLab() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       const preferred = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find((type) => MediaRecorder.isTypeSupported(type));
-      const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined);
+      const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred, audioBitsPerSecond: 32000 } : { audioBitsPerSecond: 32000 });
       chunksRef.current = [];
       recorder.ondataavailable = (event) => { if (event.data.size) chunksRef.current.push(event.data); };
       recorderRef.current = recorder;
@@ -259,8 +274,7 @@ export function SpeakingLab() {
       return `${message.role === 'student' ? `Student · Round ${round}` : 'Partner'}: ${message.text}`;
     }).join('\n');
     const confidences = scores.map((item) => item.clarity / 20);
-    const form = new FormData();
-    form.set('payload', JSON.stringify({
+    const attemptPayload = {
       studentName: profile.name,
       studentId: profile.studentId,
       className: profile.className,
@@ -278,10 +292,26 @@ export function SpeakingLab() {
       totalScore: result.total,
       feedback: result.advice,
       recordingConsent,
-    }));
-    [...recordings].sort((a, b) => a.round - b.round).forEach((clip) => form.append('audio', clip.blob, `round-${clip.round}.webm`));
+    };
     try {
-      const response = await fetch('/api/attempts', { method: 'POST', body: form });
+      let response: Response;
+      if (apiMode === 'cloudbase') {
+        const audio = await Promise.all([...recordings].sort((a, b) => a.round - b.round).map(async (clip) => ({
+          round: clip.round,
+          type: clip.blob.type || 'audio/webm',
+          data: await blobToBase64(clip.blob),
+        })));
+        response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'submit', payload: attemptPayload, audio }),
+        });
+      } else {
+        const form = new FormData();
+        form.set('payload', JSON.stringify(attemptPayload));
+        [...recordings].sort((a, b) => a.round - b.round).forEach((clip) => form.append('audio', clip.blob, `round-${clip.round}.webm`));
+        response = await fetch(apiUrl, { method: 'POST', body: form });
+      }
       const payload = await response.json() as Submission;
       setSubmission(payload);
     } catch {
@@ -289,7 +319,7 @@ export function SpeakingLab() {
     } finally {
       setIsUploading(false);
     }
-  }, [attemptCount, isUploading, messages, profile, recordingConsent, recordings, result, scene, scores, startedAt]);
+  }, [apiMode, apiUrl, attemptCount, isUploading, messages, profile, recordingConsent, recordings, result, scene, scores, startedAt]);
 
   useEffect(() => {
     if (stage !== 'result' || submission || isUploading || recordings.length !== scene.turns.length) return;
@@ -304,7 +334,7 @@ export function SpeakingLab() {
       <header className="glass sticky top-0 z-30 border-b border-[#ecd3bf]">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-2xl bg-[#ea5a0b] text-lg font-black text-white">J</div><div><p className="serif text-lg font-bold text-[#c94a07]">July English Lab</p><p className="text-xs text-[#687168]">四个校园情景对话</p></div></div>
-          <a href="/teacher" className="focus-ring inline-flex items-center gap-2 rounded-full border border-[#d8b89d] bg-white px-4 py-2 text-sm font-bold text-[#416b36]"><BarChart3 className="h-4 w-4" /> 教师数据</a>
+          <a href={teacherHref} className="focus-ring inline-flex items-center gap-2 rounded-full border border-[#d8b89d] bg-white px-4 py-2 text-sm font-bold text-[#416b36]"><BarChart3 className="h-4 w-4" /> 教师数据</a>
         </div>
       </header>
 
@@ -319,7 +349,7 @@ export function SpeakingLab() {
             <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">{scenes.map((item) => <button key={item.id} onClick={() => setShadowSceneId(item.id)} className={`focus-ring rounded-2xl border px-3 py-3 text-left ${shadowSceneId === item.id ? 'border-[#ea5a0b] bg-[#fff0e4]' : 'border-[#e4d4c7] bg-white'}`}><span className="text-lg">{item.icon}</span><span className="ml-2 text-sm font-bold">{item.number} {item.titleZh}</span></button>)}</div>
             <div className="grid gap-5 lg:grid-cols-[1.15fr_.85fr]">
               <div className="rounded-[28px] border border-[#e5cbb6] bg-white p-5 shadow-soft sm:p-7">
-                <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-bold text-[#416b36]">PPT MODEL DIALOGUE</p><h2 className="serif mt-1 text-2xl font-bold">{shadowScene.number} · {shadowScene.title}</h2></div><audio controls src={shadowScene.audio}><track kind="captions" src={shadowScene.captions} srcLang="en" label="English" default /></audio></div>
+                <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-bold text-[#416b36]">PPT MODEL DIALOGUE</p><h2 className="serif mt-1 text-2xl font-bold">{shadowScene.number} · {shadowScene.title}</h2></div><audio controls src={`${assetBase}${shadowScene.audio}`}><track kind="captions" src={`${assetBase}${shadowScene.captions}`} srcLang="en" label="English" default /></audio></div>
                 <div className="mt-5 space-y-3">{shadowScene.model.map((line, index) => <div key={line} className="flex items-start gap-3 rounded-2xl bg-[#fffaf6] p-3.5"><span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-black text-white ${index % 2 ? 'bg-[#416b36]' : 'bg-[#ea5a0b]'}`}>{index % 2 ? 'B' : 'A'}</span><p className="flex-1 pt-0.5 text-lg leading-7">{line}</p><button onClick={() => speak(line)} aria-label={`播放第${index + 1}句`} className="focus-ring grid h-8 w-8 place-items-center rounded-full bg-[#e8f1e5] text-[#416b36]"><Volume2 className="h-4 w-4" /></button></div>)}</div>
               </div>
               <aside className="rounded-[28px] border border-[#cadcc7] bg-[#f5faf2] p-5 shadow-soft sm:p-6"><p className="text-sm font-bold text-[#416b36]">这个场景可以这样说</p><div className="mt-4 space-y-3">{shadowScene.turns.map((item, index) => <div key={item.frame} className="rounded-2xl bg-white p-4"><p className="text-xs font-black text-[#ea5a0b]">TIP {index + 1}</p><p className="mt-1 text-lg font-semibold leading-7">{item.frame}</p></div>)}</div><button onClick={() => setStage('choose')} className="focus-ring mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#ea5a0b] px-5 py-3.5 font-bold text-white">跟读完成，选择场景 <ChevronRight className="h-5 w-5" /></button></aside>

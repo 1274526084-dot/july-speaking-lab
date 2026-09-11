@@ -1,0 +1,16 @@
+{
+  "$schema": "https://static.cloudbase.net/cli/cloudbaserc.schema.json",
+  "envId": "cloudbase-d3gxxe4l88c3d5907",
+  "functionRoot": "./tcb-functions",
+  "functions": [
+    {
+      "name": "speakingLabApi",
+      "runtime": "Nodejs20.19",
+      "handler": "index.main",
+      "timeout": 30,
+      "memorySize": 256,
+      "installDependency": true,
+      "ignore": ["node_modules/**", ".git/**"]
+    }
+  ]
+}

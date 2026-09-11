@@ -9,8 +9,17 @@ const webRoot = path.join(projectDir, 'mainland');
 
 export default defineConfig({
   root: webRoot,
+  base: '/july-speaking-lab/',
   publicDir: path.join(projectDir, 'public'),
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'github-pages-nojekyll',
+      generateBundle() {
+        this.emitFile({ type: 'asset', fileName: '.nojekyll', source: '' });
+      },
+    },
+  ],
   resolve: {
     alias: { '@': projectDir },
   },
@@ -18,7 +27,7 @@ export default defineConfig({
     postcss: { plugins: [tailwindcss()] },
   },
   build: {
-    outDir: path.join(projectDir, 'mainland-dist'),
+    outDir: path.join(projectDir, 'docs'),
     emptyOutDir: true,
     rollupOptions: {
       input: {

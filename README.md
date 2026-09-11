@@ -6,10 +6,10 @@
 
 ## 网站入口
 
-- 学生统一入口：<https://1274526084-dot.github.io/july-speaking-lab/>
+- 学生统一入口：<https://1274526084-dot.github.io/july-speaking-lab/student/>
 - 教师数据入口：<https://1274526084-dot.github.io/july-speaking-lab/teacher>
 
-GitHub Pages 提供稳定入口并转到完整教学应用。录音上传、数据保存和教师身份验证继续由服务器端运行环境处理，因为这些功能无法只靠静态 GitHub Pages 完成。
+网页本体直接由 GitHub Pages 打开，不再跳转到其他网站；录音上传、数据保存和教师密码验证由腾讯云 CloudBase 接口处理。
 
 ## 主要功能
 
