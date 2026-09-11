@@ -11,6 +11,15 @@
       "memorySize": 256,
       "installDependency": true,
       "ignore": ["node_modules/**", ".git/**"]
+    },
+    {
+      "name": "wordLabApi",
+      "runtime": "Nodejs20.19",
+      "handler": "index.main",
+      "timeout": 30,
+      "memorySize": 256,
+      "installDependency": true,
+      "ignore": ["node_modules/**", ".git/**"]
     }
   ]
 }
