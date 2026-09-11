@@ -1,10 +1,11 @@
 /* oxlint-disable jsx-a11y/media-has-caption */
-import { BarChart3, BookOpenCheck, ChevronDown, Clipboard, Download, Headphones, KeyRound, LoaderCircle, LockKeyhole, LogOut, Plus, Radio, RefreshCw, Search, ShieldCheck, Sparkles, Users, Volume2, X } from 'lucide-react';
+import { BarChart3, BookOpenCheck, ChevronDown, Clipboard, CopyPlus, Download, Headphones, KeyRound, Library, LoaderCircle, LockKeyhole, LogOut, Plus, Radio, RefreshCw, Search, ShieldCheck, Sparkles, Users, Volume2, X } from 'lucide-react';
 import { type SyntheticEvent, useEffect, useMemo, useState } from 'react';
 import { clearWordSession, getWordRole, getWordToken, setWordSession, type WordAttempt, type WordItem, type WordUnit, wordPath, wordRequest } from './word-api';
 
 type Teacher = { id: string; code: string; name: string; active: boolean; created_at: number };
-type UnitRow = WordUnit & { share_code: string; teacher_name: string; status: string; demoCount: number; updated_at: number };
+type UnitRow = WordUnit & { teacher_id: string; share_code: string; teacher_name: string; status: string; demoCount: number; updated_at: number; copied_from_teacher?: string };
+type SharedUnitRow = { id: string; title: string; note: string; teacher_id: string; teacher_name: string; share_code: string; published_at: number; wordCount: number; demoCount: number; isMine: boolean };
 
 function normalize(value: string) { return value.toLocaleLowerCase('zh-CN').replace(/[\s_-]+/g, ''); }
 function formatDate(value: number) { return new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }); }
@@ -77,14 +78,77 @@ function DictionaryWord({ word }: { word: WordItem }) {
   return <div className="rounded-2xl border border-slate-200 bg-white p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><b className="text-xl">{word.word}</b>{word.phonetic && <span className="ml-2 text-sm font-bold text-indigo-700">{word.phonetic}</span>}<p className="mt-2 text-sm leading-6 text-slate-600">{word.meaning || '暂无词典释义'}</p>{word.example && <p className="mt-1 text-sm italic leading-6 text-slate-500">“{word.example}”</p>}</div><span className={`word-status ${word.audio_file_id ? 'is-live' : ''}`}>{word.audio_file_id ? '词典发音' : '未找到发音'}</span></div>{word.audioUrl && <audio controls preload="none" src={word.audioUrl} className="mt-3 h-9 w-full" />}</div>;
 }
 
+function SharedLibrary({ rows, onApplied }: { rows: SharedUnitRow[]; onApplied: (unit: UnitRow) => void }) {
+  const [keyword, setKeyword] = useState('');
+  const [detail, setDetail] = useState<UnitRow | null>(null);
+  const [loadingId, setLoadingId] = useState('');
+  const [applyingId, setApplyingId] = useState('');
+  const [error, setError] = useState('');
+  const filtered = rows.filter((row) => !keyword || normalize(`${row.title}${row.teacher_name}`).includes(normalize(keyword)));
+
+  async function toggleDetail(unit: SharedUnitRow) {
+    if (detail?.id === unit.id) { setDetail(null); return; }
+    setLoadingId(unit.id); setError('');
+    try {
+      const payload = await wordRequest<{ unit: UnitRow }>('teacherGetSharedUnit', { unitId: unit.id }, getWordToken());
+      setDetail(payload.unit);
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : '暂时无法读取任务。'); }
+    finally { setLoadingId(''); }
+  }
+
+  async function applyUnit(unit: SharedUnitRow) {
+    setApplyingId(unit.id); setError('');
+    try {
+      const payload = await wordRequest<{ unit: UnitRow }>('teacherCloneUnit', { unitId: unit.id }, getWordToken());
+      onApplied(payload.unit);
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : '应用任务失败，请重试。'); }
+    finally { setApplyingId(''); }
+  }
+
+  return <section><div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="word-kicker">TEAM TASK LIBRARY</p><h2 className="mt-1 text-2xl font-black">共享任务库</h2><p className="mt-2 text-sm leading-6 text-slate-500">每位老师发布的新任务都会显示在这里。点击“应用到我的工作台”会生成独立副本和新的学生链接。</p></div><label className="relative w-full sm:w-80"><span className="sr-only">搜索共享任务</span><Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} className="word-input pl-12" placeholder="搜索老师或任务名称" /></label></div>{error && <p className="word-error mb-4">{error}</p>}<div className="grid gap-4">{filtered.map((unit) => <article key={unit.id} className="word-card overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-4 p-5"><button onClick={() => void toggleDetail(unit)} className="flex min-w-0 flex-1 items-center gap-4 text-left"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-cyan-100 text-cyan-800"><Library /></div><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate text-lg font-black">{unit.title}</h3><span className="word-chip">{unit.teacher_name}</span>{unit.isMine && <span className="word-status is-live">我的任务</span>}</div><p className="mt-1 text-sm text-slate-500">{unit.wordCount} 个单词 · 发布于 {formatDate(unit.published_at)}</p></div>{loadingId === unit.id ? <LoaderCircle className="ml-auto h-5 w-5 animate-spin text-indigo-600" /> : <ChevronDown className={`ml-auto h-5 w-5 transition ${detail?.id === unit.id ? 'rotate-180' : ''}`} />}</button>{!unit.isMine && <button disabled={applyingId === unit.id} onClick={() => void applyUnit(unit)} className="word-primary text-sm">{applyingId === unit.id ? <><LoaderCircle className="h-4 w-4 animate-spin" />正在应用…</> : <><CopyPlus className="h-4 w-4" />应用到我的工作台</>}</button>}</div>{detail?.id === unit.id && <div className="border-t border-slate-200 bg-slate-50 p-5"><div className="mb-4 rounded-2xl bg-white p-4 text-sm leading-6 text-slate-600"><b className="text-slate-900">教师提示：</b>{detail.note || '无额外提示'}</div><div className="grid gap-3 lg:grid-cols-2">{detail.words.map((word) => <DictionaryWord key={word.id} word={word} />)}</div></div>}</article>)}{!filtered.length && <div className="word-card p-12 text-center"><Library className="mx-auto h-12 w-12 text-indigo-300" /><h3 className="mt-4 text-xl font-black">还没有找到共享任务</h3><p className="mt-2 text-slate-500">老师发布新任务后会自动出现在这里。</p></div>}</div></section>;
+}
+
 function TeacherApp() {
-  const [name, setName] = useState('教师'); const [tab, setTab] = useState<'units' | 'data'>('units'); const [units, setUnits] = useState<UnitRow[]>([]); const [attempts, setAttempts] = useState<WordAttempt[]>([]); const [loading, setLoading] = useState(true); const [editing, setEditing] = useState<UnitRow | null | 'new'>(null); const [expanded, setExpanded] = useState(''); const [notice, setNotice] = useState('');
-  async function load() { setLoading(true); try { const session = await wordRequest<{ name: string }>('session', {}, getWordToken()); setName(session.name); const [unitData, attemptData] = await Promise.all([wordRequest<{ rows: UnitRow[] }>('teacherListUnits', {}, getWordToken()), wordRequest<{ rows: WordAttempt[] }>('listAttempts', {}, getWordToken())]); setUnits(unitData.rows || []); setAttempts(attemptData.rows || []); } catch { clearWordSession(); window.location.reload(); } finally { setLoading(false); } }
+  const [name, setName] = useState('教师'); const [tab, setTab] = useState<'units' | 'shared' | 'data'>('units'); const [units, setUnits] = useState<UnitRow[]>([]); const [sharedUnits, setSharedUnits] = useState<SharedUnitRow[]>([]); const [attempts, setAttempts] = useState<WordAttempt[]>([]); const [loading, setLoading] = useState(true); const [editing, setEditing] = useState<UnitRow | null | 'new'>(null); const [expanded, setExpanded] = useState(''); const [notice, setNotice] = useState('');
+  async function load() { setLoading(true); try { const session = await wordRequest<{ name: string }>('session', {}, getWordToken()); setName(session.name); const [unitData, sharedData, attemptData] = await Promise.all([wordRequest<{ rows: UnitRow[] }>('teacherListUnits', {}, getWordToken()), wordRequest<{ rows: SharedUnitRow[] }>('teacherListSharedUnits', {}, getWordToken()), wordRequest<{ rows: WordAttempt[] }>('listAttempts', {}, getWordToken())]); setUnits(unitData.rows || []); setSharedUnits(sharedData.rows || []); setAttempts(attemptData.rows || []); } catch { clearWordSession(); window.location.reload(); } finally { setLoading(false); } }
   useEffect(() => { void load(); }, []);
   async function publish(unit: UnitRow) { setNotice(''); try { await wordRequest('teacherPublishUnit', { unitId: unit.id }, getWordToken()); setNotice(`“${unit.title}”已实时发布，可以把学生链接发到学习通。`); await load(); } catch (requestError) { setNotice(requestError instanceof Error ? requestError.message : '发布失败。'); } }
   async function copy(unit: UnitRow) { await navigator.clipboard.writeText(shareUrl(unit)); setNotice('学生链接已复制，可以粘贴到学习通。'); }
+  function applied(unit: UnitRow) { setNotice(`已把“${unit.title}”复制到您的工作台，可编辑后再发布。`); setExpanded(unit.id); setTab('units'); void load(); }
   async function logout() { await wordRequest('logout', {}, getWordToken()).catch(() => undefined); clearWordSession(); window.location.reload(); }
-  return <main className="word-shell min-h-screen pb-12"><StaffHeader title={`${name}的教师工作台`} subtitle="自己的单元独立发布；四位教师共同查看全部班级数据" onLogout={() => void logout()} /><section className="mx-auto max-w-7xl px-5 pt-6"><div className="word-tabs"><button onClick={() => setTab('units')} className={tab === 'units' ? 'is-active' : ''}><Radio />单元发布</button><button onClick={() => setTab('data')} className={tab === 'data' ? 'is-active' : ''}><BarChart3 />全部学生数据</button></div>{notice && <p className="mt-4 rounded-2xl bg-cyan-50 px-4 py-3 text-sm font-bold text-cyan-950">{notice}</p>}{loading ? <div className="grid place-items-center py-24 text-indigo-700"><LoaderCircle className="h-8 w-8 animate-spin" /></div> : tab === 'units' ? <div className="mt-5">{editing ? <UnitEditor unit={editing === 'new' ? null : editing} onCancel={() => setEditing(null)} onSaved={(saved, message) => { setEditing(null); setExpanded(saved.id); setNotice(message); void load(); }} /> : <><div className="mb-4 flex items-end justify-between gap-4"><div><p className="word-kicker">我的教学内容</p><h2 className="mt-1 text-2xl font-black">单元与词典标准发音</h2></div><button onClick={() => setEditing('new')} className="word-primary"><Plus className="h-5 w-5" />智能添加单元</button></div><div className="grid gap-4">{units.map((unit) => <article key={unit.id} className="word-card overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-4 p-5"><button onClick={() => setExpanded(expanded === unit.id ? '' : unit.id)} className="flex min-w-0 flex-1 items-center gap-4 text-left"><div className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${unit.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}><BookOpenCheck /></div><div className="min-w-0"><h3 className="truncate text-lg font-black">{unit.title}</h3><p className="mt-1 text-sm text-slate-500">{unit.words.length} 个单词 · 词典发音 {unit.demoCount}/{unit.words.length} · {unit.status === 'published' ? '已发布' : '草稿'}</p></div><ChevronDown className={`ml-auto h-5 w-5 transition ${expanded === unit.id ? 'rotate-180' : ''}`} /></button><div className="flex flex-wrap gap-2"><button onClick={() => setEditing(unit)} className="word-secondary text-sm"><Sparkles className="h-4 w-4" />智能编辑</button>{unit.status === 'published' && <button onClick={() => void copy(unit)} className="word-secondary text-sm"><Clipboard className="h-4 w-4" />复制学生链接</button>}<button onClick={() => void publish(unit)} className="word-primary text-sm"><Radio className="h-4 w-4" />{unit.status === 'published' ? '重新发布' : '实时发布'}</button></div></div>{expanded === unit.id && <div className="border-t border-slate-200 bg-slate-50 p-5"><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-bold text-slate-600">发音、音标、英文释义和例句已由系统自动获取；可先试听再发布。</p><span className="word-pill">单元代码 {unit.share_code}</span></div><div className="grid gap-3 lg:grid-cols-2">{unit.words.map((word) => <DictionaryWord key={word.id} word={word} />)}</div></div>}</article>)}{!units.length && <div className="word-card p-12 text-center"><Sparkles className="mx-auto h-12 w-12 text-indigo-300" /><h3 className="mt-4 text-xl font-black">还没有单元</h3><p className="mt-2 text-slate-500">点击“智能添加单元”，只需粘贴英文单词即可。</p></div>}</div></>}</div> : <div className="mt-5"><Metrics attempts={attempts} /><div className="word-card mt-5 p-5"><AttemptsTable rows={attempts} showTeacher /></div></div>}</section></main>;
+  return (
+    <main className="word-shell min-h-screen pb-12">
+      <StaffHeader title={`${name}的教师工作台`} subtitle="自己的单元独立发布；已发布任务可供四位教师互相应用" onLogout={() => void logout()} />
+      <section className="mx-auto max-w-7xl px-5 pt-6">
+        <div className="word-tabs">
+          <button onClick={() => setTab('units')} className={tab === 'units' ? 'is-active' : ''}><Radio />我的单元</button>
+          <button onClick={() => setTab('shared')} className={tab === 'shared' ? 'is-active' : ''}><Library />共享任务库</button>
+          <button onClick={() => setTab('data')} className={tab === 'data' ? 'is-active' : ''}><BarChart3 />全部学生数据</button>
+        </div>
+        {notice && <p className="mt-4 rounded-2xl bg-cyan-50 px-4 py-3 text-sm font-bold text-cyan-950">{notice}</p>}
+        {loading && <div className="grid place-items-center py-24 text-indigo-700"><LoaderCircle className="h-8 w-8 animate-spin" /></div>}
+
+        {!loading && tab === 'units' && <div className="mt-5">
+          {editing ? <UnitEditor unit={editing === 'new' ? null : editing} onCancel={() => setEditing(null)} onSaved={(saved, message) => { setEditing(null); setExpanded(saved.id); setNotice(message); void load(); }} /> : <>
+            <div className="mb-4 flex items-end justify-between gap-4"><div><p className="word-kicker">我的教学内容</p><h2 className="mt-1 text-2xl font-black">单元与词典标准发音</h2></div><button onClick={() => setEditing('new')} className="word-primary"><Plus className="h-5 w-5" />智能添加单元</button></div>
+            <div className="grid gap-4">
+              {units.map((unit) => <article key={unit.id} className="word-card overflow-hidden">
+                <div className="flex flex-wrap items-center justify-between gap-4 p-5">
+                  <button onClick={() => setExpanded(expanded === unit.id ? '' : unit.id)} className="flex min-w-0 flex-1 items-center gap-4 text-left"><div className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${unit.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}><BookOpenCheck /></div><div className="min-w-0"><h3 className="truncate text-lg font-black">{unit.title}</h3><p className="mt-1 text-sm text-slate-500">{unit.words.length} 个单词 · 词典发音 {unit.demoCount}/{unit.words.length} · {unit.status === 'published' ? '已发布并共享' : '草稿'}</p>{unit.copied_from_teacher && <p className="mt-1 text-xs font-bold text-cyan-700">应用自 {unit.copied_from_teacher}</p>}</div><ChevronDown className={`ml-auto h-5 w-5 transition ${expanded === unit.id ? 'rotate-180' : ''}`} /></button>
+                  <div className="flex flex-wrap gap-2"><button onClick={() => setEditing(unit)} className="word-secondary text-sm"><Sparkles className="h-4 w-4" />智能编辑</button>{unit.status === 'published' && <button onClick={() => void copy(unit)} className="word-secondary text-sm"><Clipboard className="h-4 w-4" />复制学生链接</button>}<button onClick={() => void publish(unit)} className="word-primary text-sm"><Radio className="h-4 w-4" />{unit.status === 'published' ? '重新发布' : '实时发布'}</button></div>
+                </div>
+                {expanded === unit.id && <div className="border-t border-slate-200 bg-slate-50 p-5"><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-bold text-slate-600">发音、音标、释义和例句已由系统自动获取；发布后自动进入共享任务库。</p><span className="word-pill">单元代码 {unit.share_code}</span></div><div className="grid gap-3 lg:grid-cols-2">{unit.words.map((word) => <DictionaryWord key={word.id} word={word} />)}</div></div>}
+              </article>)}
+              {!units.length && <div className="word-card p-12 text-center"><Sparkles className="mx-auto h-12 w-12 text-indigo-300" /><h3 className="mt-4 text-xl font-black">还没有单元</h3><p className="mt-2 text-slate-500">可以智能新建，也可以从共享任务库应用其他老师的任务。</p></div>}
+            </div>
+          </>}
+        </div>}
+
+        {!loading && tab === 'shared' && <div className="mt-5"><SharedLibrary rows={sharedUnits} onApplied={applied} /></div>}
+        {!loading && tab === 'data' && <div className="mt-5"><Metrics attempts={attempts} /><div className="word-card mt-5 p-5"><AttemptsTable rows={attempts} showTeacher /></div></div>}
+      </section>
+    </main>
+  );
 }
 
 function AdminApp() {

@@ -323,6 +323,82 @@ async function handleTeacherListUnits(event, body) {
   return response(event, 200, { ok: true, rows });
 }
 
+async function handleTeacherListSharedUnits(event, body) {
+  const session = await validSession(body.token, ['teacher']);
+  if (!session) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
+  const result = await queryRows(UNITS, { status: 'published' }, 300);
+  const rows = result.map((unit) => {
+    const words = cleanWords(parseJson(unit.words_json || '[]', []));
+    return {
+      id: unit.id, title: unit.title, note: unit.note || '', teacher_id: unit.teacher_id,
+      teacher_name: unit.teacher_name, share_code: unit.share_code, published_at: unit.published_at,
+      wordCount: words.length, demoCount: words.filter((word) => word.audio_file_id).length,
+      isMine: unit.teacher_id === session.teacher_id,
+    };
+  });
+  rows.sort((left, right) => Number(right.published_at || 0) - Number(left.published_at || 0));
+  return response(event, 200, { ok: true, rows });
+}
+
+async function handleTeacherGetSharedUnit(event, body) {
+  const session = await validSession(body.token, ['teacher']);
+  if (!session) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
+  const unit = await getDocument(UNITS, cleanText(body.unitId, 80));
+  if (!unit || unit.status !== 'published') return response(event, 404, { ok: false, error: '共享任务不存在或尚未发布。' });
+  const words = cleanWords(parseJson(unit.words_json || '[]', []));
+  const urls = await temporaryUrlMap(words.map((word) => word.audio_file_id));
+  const hydratedWords = words.map((word) => ({ ...word, audioUrl: urls.get(word.audio_file_id) || '' }));
+  return response(event, 200, { ok: true, unit: { ...unit, words: hydratedWords, words_json: undefined, demoCount: words.filter((word) => word.audio_file_id).length } });
+}
+
+async function handleTeacherCloneUnit(event, body) {
+  const session = await validSession(body.token, ['teacher']);
+  if (!session) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
+  const source = await getDocument(UNITS, cleanText(body.unitId, 80));
+  if (!source || source.status !== 'published') return response(event, 404, { ok: false, error: '共享任务不存在或尚未发布。' });
+  if (source.teacher_id === session.teacher_id) return response(event, 400, { ok: false, error: '这是您自己的任务，无需重复应用。' });
+  const sourceWords = cleanWords(parseJson(source.words_json || '[]', []));
+  if (!sourceWords.length || sourceWords.some((word) => !word.audio_file_id)) return response(event, 400, { ok: false, error: '原任务的发音资料不完整，暂时无法应用。' });
+  const sourceUrls = await temporaryUrlMap(sourceWords.map((word) => word.audio_file_id));
+  const id = randomUUID();
+  const copiedFiles = [];
+  try {
+    const copiedWords = await Promise.all(sourceWords.map(async (word) => {
+      const sourceUrl = sourceUrls.get(word.audio_file_id);
+      if (!sourceUrl) throw new Error(`无法读取 ${word.word} 的发音`);
+      const audioResponse = await fetchWithTimeout(sourceUrl, { headers: { Accept: 'audio/*' } }, 10000);
+      if (!audioResponse.ok) throw new Error(`无法复制 ${word.word} 的发音`);
+      const buffer = Buffer.from(await audioResponse.arrayBuffer());
+      if (!buffer.length || buffer.length > MAX_AUDIO_BYTES) throw new Error(`${word.word} 的发音文件无效`);
+      const cloudPath = `july-word-lab/shared-copy/${session.teacher_id}/${id}/${randomUUID()}.${extensionFor(word.audio_type || audioResponse.headers.get('content-type'))}`;
+      const upload = await app.uploadFile({ cloudPath, fileContent: buffer });
+      if (!upload.fileID) throw new Error(`无法保存 ${word.word} 的发音`);
+      copiedFiles.push(upload.fileID);
+      return { ...word, id: randomUUID(), audio_file_id: upload.fileID };
+    }));
+    let shareCode = '';
+    for (let tries = 0; tries < 8 && !shareCode; tries += 1) {
+      const candidate = randomShareCode();
+      if (!(await findOne(UNITS, { share_code: candidate }))) shareCode = candidate;
+    }
+    if (!shareCode) throw new Error('暂时无法生成单元代码');
+    const now = Date.now();
+    const record = {
+      id, teacher_id: session.teacher_id, teacher_name: session.teacher_name,
+      title: source.title, note: source.note || '', words_json: JSON.stringify(copiedWords),
+      share_code: shareCode, status: 'draft', created_at: now, updated_at: now, published_at: null,
+      copied_from_unit_id: source.id, copied_from_teacher: source.teacher_name,
+    };
+    await db.collection(UNITS).doc(id).set(record);
+    const urls = await temporaryUrlMap(copiedWords.map((word) => word.audio_file_id));
+    const words = copiedWords.map((word) => ({ ...word, audioUrl: urls.get(word.audio_file_id) || '' }));
+    return response(event, 200, { ok: true, unit: { ...record, words, words_json: undefined, demoCount: words.length } });
+  } catch (error) {
+    if (copiedFiles.length) await app.deleteFile({ fileList: copiedFiles }).catch(() => undefined);
+    return response(event, 500, { ok: false, error: cleanText(error?.message || '应用任务失败，请稍后重试。', 160) });
+  }
+}
+
 async function handleTeacherSaveUnit(event, body) {
   const session = await validSession(body.token, ['teacher']);
   if (!session) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
@@ -649,6 +725,9 @@ exports.main = async (event) => {
       return response(event, 200, { ok: true });
     }
     if (action === 'teacherListUnits') return handleTeacherListUnits(event, body);
+    if (action === 'teacherListSharedUnits') return handleTeacherListSharedUnits(event, body);
+    if (action === 'teacherGetSharedUnit') return handleTeacherGetSharedUnit(event, body);
+    if (action === 'teacherCloneUnit') return handleTeacherCloneUnit(event, body);
     if (action === 'teacherSaveUnit') return handleTeacherSaveUnit(event, body);
     if (action === 'teacherSmartImport') return handleTeacherSmartImport(event, body);
     if (action === 'teacherUploadReference') return handleTeacherUploadReference(event, body);
