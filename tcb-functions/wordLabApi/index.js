@@ -245,7 +245,8 @@ async function temporaryUrlMap(fileIds) {
 }
 
 function randomShareCode() {
-  return randomBytes(4).toString('hex').toUpperCase();
+  const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  return [...randomBytes(6)].map((value) => alphabet[value % alphabet.length]).join('');
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 9000) {
@@ -441,8 +442,8 @@ async function handleTeacherSmartImport(event, body) {
     const term = cleanLookupTerm(typeof item === 'string' ? item : item?.term);
     if (term && !entryMap.has(term)) entryMap.set(term, { term, meaning: cleanText(item?.meaning, 120) });
   }
-  const entries = [...entryMap.values()].slice(0, 25);
-  if (!title || !entries.length) return response(event, 400, { ok: false, error: '请填写单元名称，并输入1—25个英文单词。' });
+  const entries = [...entryMap.values()].slice(0, 60);
+  if (!title || !entries.length) return response(event, 400, { ok: false, error: '请填写单元名称，并输入1—60个英文单词或词组。' });
   const now = Date.now();
   const id = cleanText(body.id, 64) || randomUUID();
   const existing = await getDocument(UNITS, id);
@@ -538,7 +539,7 @@ async function handleStudentGetUnit(event, body) {
 }
 
 async function handleStudentStart(event, body) {
-  if (!(await rateLimit(event, 'word-start', 30))) return response(event, 429, { ok: false, error: '操作太频繁，请稍后再试。' });
+  if (!(await rateLimit(event, 'word-start', 300))) return response(event, 429, { ok: false, error: '操作太频繁，请稍后再试。' });
   const unit = await findOne(UNITS, { share_code: cleanText(body.shareCode, 20).toUpperCase(), status: 'published' });
   const studentName = cleanText(body.studentName, 40);
   const className = cleanText(body.className, 80);
@@ -586,10 +587,83 @@ async function studentAttempt(body) {
   return attempt;
 }
 
-async function handleStudentSubmitWord(event, body) {
-  if (!(await rateLimit(event, 'word-audio', 100))) return response(event, 429, { ok: false, error: '上传太频繁，请稍后再试。' });
+async function handleStudentPrepareWordUpload(event, body) {
+  const attemptId = cleanText(body.attemptId, 64);
   const attempt = await studentAttempt(body);
   if (!attempt || attempt.status === 'completed') return response(event, 401, { ok: false, error: '本次练习已失效，请重新进入单元。' });
+  if (!(await rateLimit(event, `word-audio-${attemptId}`, 180))) return response(event, 429, { ok: false, error: '本次练习上传太频繁，请稍后再试。' });
+  const unit = await getDocument(UNITS, attempt.unit_id);
+  const words = cleanWords(parseJson(unit?.words_json || '[]', []));
+  const word = words.find((item) => item.id === cleanText(body.wordId, 64));
+  const audioType = cleanText(body.audioType, 80) || 'audio/wav';
+  const audioBytes = cleanInt(body.audioBytes, 1, MAX_AUDIO_BYTES + 1, 0);
+  if (!word || !audioType.startsWith('audio/') || !audioBytes || audioBytes > MAX_AUDIO_BYTES) {
+    return response(event, 400, { ok: false, error: '录音无效或超过2MB，请重新录制。' });
+  }
+  const cloudPath = `july-word-lab/student/${attempt.teacher_id}/${attempt.unit_id}/${attempt.id}/${word.id}-${Date.now()}.${extensionFor(audioType)}`;
+  const metadata = await app.getUploadMetadata({ cloudPath });
+  const upload = metadata?.data || {};
+  if (!upload.url || !upload.fileId || !upload.authorization || !upload.token || !upload.cosFileId) {
+    return response(event, 500, { ok: false, error: '暂时无法准备录音上传，请稍后重试。' });
+  }
+  const pending = Array.isArray(parseJson(attempt.pending_uploads_json || '[]', [])) ? parseJson(attempt.pending_uploads_json || '[]', []) : [];
+  const discardedFiles = pending.filter((item) => Number(item.expires_at || 0) <= Date.now() || item.word_id === word.id).map((item) => item.file_id).filter(Boolean);
+  const nextPending = pending.filter((item) => Number(item.expires_at || 0) > Date.now() && item.word_id !== word.id);
+  nextPending.push({ word_id: word.id, file_id: upload.fileId, cloud_path: cloudPath, audio_type: audioType, audio_bytes: audioBytes, expires_at: Date.now() + 10 * 60 * 1000 });
+  await db.collection(ATTEMPTS).doc(attempt.id).update({ pending_uploads_json: JSON.stringify(nextPending) });
+  if (discardedFiles.length) await app.deleteFile({ fileList: discardedFiles.slice(0, 50) }).catch(() => undefined);
+  return response(event, 200, {
+    ok: true,
+    upload: { url: upload.url, token: upload.token, authorization: upload.authorization, fileId: upload.fileId, cosFileId: upload.cosFileId, cloudPath },
+  });
+}
+
+async function handleStudentConfirmWord(event, body) {
+  const attempt = await studentAttempt(body);
+  if (!attempt || attempt.status === 'completed') return response(event, 401, { ok: false, error: '本次练习已失效，请重新进入单元。' });
+  const unit = await getDocument(UNITS, attempt.unit_id);
+  const words = cleanWords(parseJson(unit?.words_json || '[]', []));
+  const word = words.find((item) => item.id === cleanText(body.wordId, 64));
+  const fileId = cleanText(body.fileId, 500);
+  const pending = Array.isArray(parseJson(attempt.pending_uploads_json || '[]', [])) ? parseJson(attempt.pending_uploads_json || '[]', []) : [];
+  const upload = pending.find((item) => item.word_id === word?.id && item.file_id === fileId && Number(item.expires_at || 0) > Date.now());
+  if (!word || !upload) return response(event, 400, { ok: false, error: '录音上传凭证无效，请重新录制。' });
+  const info = await app.getFileInfo({ fileList: [fileId] });
+  const stored = (info.fileList || [])[0];
+  const storedBytes = Number(stored?.size || 0);
+  if (stored?.code !== 'SUCCESS' || !storedBytes) return response(event, 400, { ok: false, error: '录音尚未上传完成，请稍后重试。' });
+  if (storedBytes > MAX_AUDIO_BYTES) {
+    await app.deleteFile({ fileList: [fileId] }).catch(() => undefined);
+    return response(event, 400, { ok: false, error: '录音超过2MB，请重新录制。' });
+  }
+  const transcript = cleanText(body.transcript, 120);
+  const confidence = Math.max(0, Math.min(1, Number(body.confidence) || 0));
+  const selfRating = cleanInt(body.selfRating, 1, 3, 2);
+  const score = scoreRecognition(word.word, transcript, confidence);
+  const results = Array.isArray(parseJson(attempt.results_json || '[]', [])) ? parseJson(attempt.results_json || '[]', []) : [];
+  const existing = results.find((item) => item.word_id === word.id);
+  const next = {
+    word_id: word.id, word: word.word, transcript, confidence: Math.round(confidence * 100),
+    system_score: score, self_rating: selfRating, audio_file_id: fileId, audio_type: upload.audio_type,
+    recorded_at: Date.now(),
+  };
+  const nextResults = [...results.filter((item) => item.word_id !== word.id), next];
+  await db.collection(ATTEMPTS).doc(attempt.id).update({
+    results_json: JSON.stringify(nextResults),
+    pending_uploads_json: JSON.stringify(pending.filter((item) => item.file_id !== fileId && Number(item.expires_at || 0) > Date.now())),
+  });
+  if (existing?.audio_file_id && existing.audio_file_id !== fileId) await app.deleteFile({ fileList: [existing.audio_file_id] }).catch(() => undefined);
+  const advice = !transcript ? '系统没有识别到单词，请靠近麦克风、放慢速度后再试。'
+    : score >= 88 ? '识别很清楚，可以继续保持自然重音。'
+      : score >= 65 ? '基本识别正确，建议再听一次示范并完整读出每个音节。'
+        : '与目标词差异较大，请先听示范，再分音节慢读。';
+  return response(event, 200, { ok: true, score, advice, transcript });
+}
+
+async function handleStudentSubmitWord(event, body) {
+  const attempt = await studentAttempt(body);
+  if (!attempt || attempt.status === 'completed') return response(event, 401, { ok: false, error: '本次练习已失效，请重新进入单元。' });
+  if (!(await rateLimit(event, `word-audio-${attempt.id}`, 180))) return response(event, 429, { ok: false, error: '本次练习上传太频繁，请稍后再试。' });
   const unit = await getDocument(UNITS, attempt.unit_id);
   const words = cleanWords(parseJson(unit?.words_json || '[]', []));
   const word = words.find((item) => item.id === cleanText(body.wordId, 64));
@@ -734,6 +808,8 @@ exports.main = async (event) => {
     if (action === 'teacherPublishUnit') return handleTeacherPublish(event, body);
     if (action === 'studentGetUnit') return handleStudentGetUnit(event, body);
     if (action === 'studentStart') return handleStudentStart(event, body);
+    if (action === 'studentPrepareWordUpload') return handleStudentPrepareWordUpload(event, body);
+    if (action === 'studentConfirmWord') return handleStudentConfirmWord(event, body);
     if (action === 'studentSubmitWord') return handleStudentSubmitWord(event, body);
     if (action === 'studentComplete') return handleStudentComplete(event, body);
     if (action === 'listAttempts') return handleListAttempts(event, body);

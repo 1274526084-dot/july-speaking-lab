@@ -41,6 +41,7 @@ next-env.d.ts
 
 # local deployment tools and generated staging files
 /.cloudbase-cli/
+/.debug-cloudbase-sdk/
 /.cloudbase-home/
 /.npm-cache/
 /.edgeone/

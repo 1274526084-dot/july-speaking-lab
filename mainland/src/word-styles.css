@@ -44,6 +44,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .word-status { border-radius: 999px; background: #fff7ed; padding: 5px 9px; font-size: .72rem; font-weight: 900; color: #c2410c; }
 .word-status.is-live { background: #dcfce7; color: #15803d; }
 .word-chip { display: inline-flex; align-items: center; border: 1px solid #c7d2fe; border-radius: 999px; background: #eef2ff; padding: 6px 11px; font-size: .82rem; font-weight: 800; color: #3730a3; }
+.word-modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; overflow-y: auto; background: rgba(15, 23, 42, .62); padding: 20px; backdrop-filter: blur(6px); }
+.word-modal-card { width: min(100%, 560px); max-height: calc(100vh - 40px); overflow-y: auto; }
 .word-table { width: 100%; border-collapse: collapse; background: white; font-size: .88rem; }
 .word-table th { background: #eef2ff; padding: 13px 15px; color: #475569; text-align: left; }
 .word-table td { border-top: 1px solid #e2e8f0; padding: 15px; vertical-align: top; }

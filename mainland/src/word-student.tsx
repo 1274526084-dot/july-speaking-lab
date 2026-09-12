@@ -1,7 +1,7 @@
 /* oxlint-disable jsx-a11y/media-has-caption */
 import { ArrowLeft, ArrowRight, CheckCircle2, Headphones, LoaderCircle, Mic, RotateCcw, Search, ShieldCheck, Sparkles, Square, Volume2 } from 'lucide-react';
 import { type SyntheticEvent, useEffect, useRef, useState } from 'react';
-import { blobToAudio, type WordUnit, wordRequest } from './word-api';
+import { prepareAudioForUpload, type WordUnit, type WordUploadTicket, uploadWordAudio, wordRequest } from './word-api';
 
 type SpeechResultLike = { 0: { transcript: string; confidence: number }; isFinal: boolean };
 type SpeechEventLike = { resultIndex: number; results: ArrayLike<SpeechResultLike> };
@@ -20,6 +20,15 @@ function getRecognition(): RecognitionLike | null {
 
 function selfLabel(value: number) {
   return value === 3 ? '我读得很顺' : value === 2 ? '基本会读' : '还要再练';
+}
+
+function normalizeUnitCode(value: string) {
+  const trimmed = value.trim();
+  try {
+    const linkedCode = new URL(trimmed).searchParams.get('unit');
+    if (linkedCode) return linkedCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  } catch { /* The value is a code rather than a full URL. */ }
+  return trimmed.toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
 export function WordStudent() {
@@ -47,9 +56,10 @@ export function WordStudent() {
   const streamRef = useRef<MediaStream | null>(null);
   const recognitionRef = useRef<RecognitionLike | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<number | null>(null);
 
   async function loadUnit(nextCode = code) {
-    const normalized = nextCode.trim().toUpperCase();
+    const normalized = normalizeUnitCode(nextCode);
     if (!normalized) return;
     setLoading(true); setError('');
     try {
@@ -62,7 +72,7 @@ export function WordStudent() {
   }
 
   useEffect(() => { if (queryCode) void loadUnit(queryCode); }, []);
-  useEffect(() => () => { if (clipUrl) URL.revokeObjectURL(clipUrl); streamRef.current?.getTracks().forEach((track) => track.stop()); }, [clipUrl]);
+  useEffect(() => () => { if (clipUrl) URL.revokeObjectURL(clipUrl); if (recordingTimerRef.current) window.clearTimeout(recordingTimerRef.current); streamRef.current?.getTracks().forEach((track) => track.stop()); }, [clipUrl]);
 
   async function startPractice(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -87,8 +97,10 @@ export function WordStudent() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream; chunksRef.current = [];
-      const preferred = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
-      const recorder = new MediaRecorder(stream, { mimeType: preferred });
+      const preferred = ['audio/webm;codecs=opus', 'audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus'].find((type) => MediaRecorder.isTypeSupported(type));
+      let recorder: MediaRecorder;
+      try { recorder = new MediaRecorder(stream, { ...(preferred ? { mimeType: preferred } : {}), audioBitsPerSecond: 48_000 }); }
+      catch { recorder = new MediaRecorder(stream); }
       recorderRef.current = recorder;
       recorder.ondataavailable = (event) => { if (event.data.size) chunksRef.current.push(event.data); };
       recorder.onstop = () => {
@@ -111,11 +123,14 @@ export function WordStudent() {
         recognitionRef.current = recognition;
         try { recognition.start(); } catch { /* recording still works */ }
       }
-      recorder.start(); setRecording(true);
-    } catch { setError('无法使用麦克风，请在浏览器地址栏允许麦克风权限后重试。'); }
+      recorder.start(250); setRecording(true);
+      recordingTimerRef.current = window.setTimeout(() => stopRecording(), 12_000);
+    } catch { streamRef.current?.getTracks().forEach((track) => track.stop()); streamRef.current = null; setError('无法使用麦克风，请在浏览器地址栏允许麦克风权限后重试。'); }
   }
 
   function stopRecording() {
+    if (recordingTimerRef.current) window.clearTimeout(recordingTimerRef.current);
+    recordingTimerRef.current = null;
     recognitionRef.current?.stop(); recognitionRef.current = null;
     if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
     setRecording(false);
@@ -125,9 +140,13 @@ export function WordStudent() {
     if (!unit || !clip || !selfRating || saving) return;
     setSaving(true); setError('');
     try {
-      const audio = await blobToAudio(clip);
-      const payload = await wordRequest<{ score: number; advice: string }>('studentSubmitWord', {
-        attemptId, submitToken, wordId: unit.words[index].id, transcript, confidence, selfRating, audio,
+      const uploadClip = await prepareAudioForUpload(clip);
+      const prepared = await wordRequest<{ upload: WordUploadTicket }>('studentPrepareWordUpload', {
+        attemptId, submitToken, wordId: unit.words[index].id, audioType: uploadClip.type, audioBytes: uploadClip.size,
+      });
+      await uploadWordAudio(prepared.upload, uploadClip);
+      const payload = await wordRequest<{ score: number; advice: string }>('studentConfirmWord', {
+        attemptId, submitToken, wordId: unit.words[index].id, fileId: prepared.upload.fileId, transcript, confidence, selfRating,
       });
       setFeedback({ score: payload.score, advice: payload.advice });
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : '录音上传失败，请重试。'); }
@@ -152,10 +171,11 @@ export function WordStudent() {
         <p className="word-kicker mt-5">July Word Sound Lab</p>
         <h1 className="mt-2 text-4xl font-black tracking-tight text-slate-950">单词跟读练习</h1>
         <p className="mt-3 text-base leading-7 text-slate-600">从学习通链接进入时会自动打开单元；也可以输入老师提供的单元代码。</p>
-        <form onSubmit={(event) => { event.preventDefault(); void loadUnit(); }} className="mt-7 flex gap-3">
-          <label className="relative flex-1"><span className="sr-only">单元代码</span><Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" /><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} className="word-input pl-12 uppercase" placeholder="输入单元代码" /></label>
-          <button disabled={loading || !code.trim()} className="word-primary min-w-28">{loading ? <LoaderCircle className="h-5 w-5 animate-spin" /> : '打开单元'}</button>
+        <form onSubmit={(event) => { event.preventDefault(); void loadUnit(); }} className="mt-7 flex flex-col gap-3 sm:flex-row">
+          <label className="relative min-w-0 flex-1"><span className="sr-only">单元代码或完整链接</span><Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" /><input value={code} onChange={(event) => setCode(event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} className="word-input pl-12" placeholder="输入代码或粘贴链接" /></label>
+          <button disabled={loading || !code.trim()} className="word-primary w-full sm:min-w-28 sm:w-auto">{loading ? <LoaderCircle className="h-5 w-5 animate-spin" /> : '打开单元'}</button>
         </form>
+        <p className="mt-3 text-sm leading-6 text-slate-500">单元代码不区分大小写，也可以直接粘贴老师发来的完整网页链接。</p>
         {error && <p role="alert" className="word-error mt-4">{error}</p>}
         <a href="../" className="mt-6 inline-flex items-center gap-2 text-sm font-bold text-indigo-700"><ArrowLeft className="h-4 w-4" />返回口语练习</a>
       </section>
@@ -193,9 +213,9 @@ export function WordStudent() {
           <div className="word-hero p-7 text-center sm:p-10"><p className="text-sm font-black tracking-[.18em] text-indigo-200">LISTEN · RECORD · REVIEW</p><h1 className="mt-4 text-5xl font-black tracking-tight text-white sm:text-7xl">{current.word}</h1>{current.phonetic && <p className="mt-3 text-xl text-cyan-100">{current.phonetic}</p>}<p className="mt-3 text-lg font-bold text-white/90">{current.meaning}</p>{current.example && <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-indigo-100">{current.example}</p>}</div>
           <div className="grid gap-6 p-6 sm:p-8 lg:grid-cols-[1fr_1.15fr]">
             <section><p className="word-step">STEP 1 · 听词典标准发音</p>{current.audioUrl ? <audio controls preload="metadata" src={current.audioUrl} className="mt-4 w-full" /> : <p className="word-error mt-4">示范音频暂时无法加载，请刷新页面。</p>}<div className="mt-5 rounded-2xl bg-indigo-50 p-4 text-sm leading-6 text-indigo-950"><Sparkles className="mb-2 h-5 w-5 text-indigo-600" />先只听一遍，注意重音和音节；第二遍再轻声模仿。</div></section>
-            <section><p className="word-step">STEP 2 · 录下你的读音</p><div className="mt-4 flex flex-wrap gap-3">{!recording ? <button onClick={() => void beginRecording()} className="word-record"><Mic className="h-6 w-6" />开始录音</button> : <button onClick={stopRecording} className="word-stop"><Square className="h-5 w-5 fill-current" />我读完了</button>}{clip && !recording && <button onClick={() => void beginRecording()} className="word-secondary"><RotateCcw className="h-4 w-4" />重新录</button>}</div>{recording && <p aria-live="polite" className="mt-3 flex items-center gap-2 text-sm font-bold text-rose-600"><span className="h-2.5 w-2.5 animate-pulse rounded-full bg-rose-500" />正在录音，请读完后点击“我读完了”</p>}{clipUrl && !recording && <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="mb-2 text-sm font-bold text-slate-600">先回听，满意后再提交</p><audio controls src={clipUrl} className="w-full" /><p className="mt-3 text-sm text-slate-500">自动识别：<strong className="text-slate-800">{transcript || '暂未识别到文字'}</strong></p></div>}</section>
+            <section><p className="word-step">STEP 2 · 录下你的读音</p><div className="mt-4 flex flex-wrap gap-3">{!recording ? <button onClick={() => void beginRecording()} className="word-record"><Mic className="h-6 w-6" />开始录音</button> : <button onClick={stopRecording} className="word-stop"><Square className="h-5 w-5 fill-current" />我读完了</button>}{clip && !recording && <button onClick={() => void beginRecording()} className="word-secondary"><RotateCcw className="h-4 w-4" />重新录</button>}</div>{recording && <p aria-live="polite" className="mt-3 flex items-center gap-2 text-sm font-bold text-rose-600"><span className="h-2.5 w-2.5 animate-pulse rounded-full bg-rose-500" />正在录音，读完请点“我读完了”；12秒后会自动停止</p>}{clipUrl && !recording && <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="mb-2 text-sm font-bold text-slate-600">先回听，满意后再提交</p><audio controls src={clipUrl} className="w-full" /><p className="mt-3 text-sm text-slate-500">自动识别：<strong className="text-slate-800">{transcript || '暂未识别到文字'}</strong></p></div>}</section>
           </div>
-          {clip && !feedback && <div className="border-t border-slate-200 px-6 py-6 sm:px-8"><p className="word-step">STEP 3 · 你的自评</p><div className="mt-4 grid gap-3 sm:grid-cols-3">{[1, 2, 3].map((value) => <button key={value} onClick={() => setSelfRating(value)} className={`word-rating ${selfRating === value ? 'is-active' : ''}`}><span>{value === 1 ? '🌱' : value === 2 ? '👍' : '✨'}</span>{selfLabel(value)}</button>)}</div>{error && <p role="alert" className="word-error mt-4">{error}</p>}<button onClick={() => void saveWord()} disabled={!selfRating || saving} className="word-primary mt-5 w-full">{saving ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <><ShieldCheck className="h-5 w-5" />保存本词并查看反馈</>}</button></div>}
+          {clip && !feedback && <div className="border-t border-slate-200 px-6 py-6 sm:px-8"><p className="word-step">STEP 3 · 你的自评</p><div className="mt-4 grid gap-3 sm:grid-cols-3">{[1, 2, 3].map((value) => <button key={value} onClick={() => setSelfRating(value)} className={`word-rating ${selfRating === value ? 'is-active' : ''}`}><span>{value === 1 ? '🌱' : value === 2 ? '👍' : '✨'}</span>{selfLabel(value)}</button>)}</div>{error && <p role="alert" className="word-error mt-4">{error}</p>}<button onClick={() => void saveWord()} disabled={!selfRating || saving} className="word-primary mt-5 w-full">{saving ? <><LoaderCircle className="h-5 w-5 animate-spin" />正在处理并上传…</> : <><ShieldCheck className="h-5 w-5" />保存本词并查看反馈</>}</button></div>}
           {feedback && <div className="border-t border-slate-200 bg-emerald-50 px-6 py-6 sm:px-8"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-black text-emerald-700">系统练习反馈</p><div className="mt-1 flex items-baseline gap-3"><strong className="text-4xl font-black text-emerald-700">{feedback.score}</strong><span className="text-sm text-emerald-900">/ 100 · {feedback.advice}</span></div></div><button onClick={() => void nextWord()} disabled={saving} className="word-primary shrink-0">{index === unit.words.length - 1 ? '提交全部练习' : '下一个单词'}<ArrowRight className="h-5 w-5" /></button></div><p className="mt-4 text-xs leading-5 text-emerald-800/75">该分数反映浏览器对目标单词的识别情况，可能受设备、网络和环境噪声影响；老师可回听录音进行判断。</p></div>}
         </article>
       </section>

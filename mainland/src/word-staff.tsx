@@ -1,5 +1,6 @@
 /* oxlint-disable jsx-a11y/media-has-caption */
-import { BarChart3, BookOpenCheck, ChevronDown, Clipboard, CopyPlus, Download, Headphones, KeyRound, Library, LoaderCircle, LockKeyhole, LogOut, Plus, Radio, RefreshCw, Search, ShieldCheck, Sparkles, Users, Volume2, X } from 'lucide-react';
+import { BarChart3, BookOpenCheck, ChevronDown, Clipboard, CopyPlus, Download, Headphones, KeyRound, Library, LoaderCircle, LockKeyhole, LogOut, Plus, QrCode, Radio, RefreshCw, Search, ShieldCheck, Sparkles, Users, Volume2, X } from 'lucide-react';
+import QRCode from 'qrcode';
 import { type SyntheticEvent, useEffect, useMemo, useState } from 'react';
 import { clearWordSession, getWordRole, getWordToken, setWordSession, type WordAttempt, type WordItem, type WordUnit, wordPath, wordRequest } from './word-api';
 
@@ -10,6 +11,17 @@ type SharedUnitRow = { id: string; title: string; note: string; teacher_id: stri
 function normalize(value: string) { return value.toLocaleLowerCase('zh-CN').replace(/[\s_-]+/g, ''); }
 function formatDate(value: number) { return new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }); }
 function shareUrl(unit: UnitRow) { return `${window.location.origin}${wordPath()}?unit=${unit.share_code}`; }
+
+function parseUnitEntries(value: string) {
+  const map = new Map<string, { term: string; meaning: string }>();
+  value.split(/\r?\n/).flatMap((line) => line.split(/[,，;；\t]+/)).forEach((raw) => {
+    const separator = raw.indexOf('|');
+    const word = (separator >= 0 ? raw.slice(0, separator) : raw).trim().toLowerCase().replace(/\s+/g, ' ');
+    const meaning = (separator >= 0 ? raw.slice(separator + 1) : '').trim();
+    if (/^[a-z][a-z' -]*$/.test(word) && !map.has(word)) map.set(word, { term: word, meaning });
+  });
+  return [...map.values()];
+}
 
 function StaffLogin({ mode }: { mode: 'teacher' | 'admin' }) {
   const [code, setCode] = useState(''); const [password, setPassword] = useState('');
@@ -55,12 +67,9 @@ function UnitEditor({ unit, onSaved, onCancel }: { unit: UnitRow | null; onSaved
   const [lines, setLines] = useState(unit?.words.map((item) => item.word).join('\n') || '');
   const [saving, setSaving] = useState(false); const [error, setError] = useState('');
   const [progress, setProgress] = useState('');
-  const rawEntries = lines.split(/\r?\n/).flatMap((line) => line.includes('|') ? [line] : line.split(/[\s,，;；]+/));
-  const entryMap = new Map<string, { term: string; meaning: string }>();
-  rawEntries.forEach((entry) => { const [word, meaning = ''] = entry.split('|').map((part) => part.trim()); const term = word.toLowerCase(); if (term && !entryMap.has(term)) entryMap.set(term, { term, meaning }); });
-  const entries = [...entryMap.values()].slice(0, 25); const terms = entries.map((entry) => entry.term);
+  const parsedEntries = parseUnitEntries(lines); const entries = parsedEntries.slice(0, 60); const terms = entries.map((entry) => entry.term); const overflowCount = Math.max(0, parsedEntries.length - entries.length);
   async function save(event: SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault(); setSaving(true); setError(''); setProgress(`正在从词典查询 ${terms.length} 个单词并保存发音，请稍候…`);
+    event.preventDefault(); setSaving(true); setError(''); setProgress(`正在从词典查询 ${terms.length} 项内容并保存发音，请稍候…`);
     try {
       const payload = await wordRequest<{ unit: UnitRow; failures: { word: string; reason: string }[] }>('teacherSmartImport', { id: unit?.id, title, note, entries }, getWordToken());
       const message = payload.failures?.length
@@ -71,7 +80,16 @@ function UnitEditor({ unit, onSaved, onCancel }: { unit: UnitRow | null; onSaved
     catch (requestError) { setError(requestError instanceof Error ? requestError.message : '保存失败。'); }
     finally { setSaving(false); setProgress(''); }
   }
-  return <form onSubmit={save} className="word-card p-6 sm:p-8"><div className="flex items-start justify-between gap-4"><div><p className="word-kicker">{unit ? '智能更新单元' : '智能新建单元'}</p><h2 className="mt-1 text-2xl font-black">只输入单词，其他交给系统</h2></div><button type="button" onClick={onCancel} className="word-icon"><X className="h-5 w-5" /></button></div><div className="mt-5 flex items-start gap-3 rounded-2xl bg-gradient-to-r from-indigo-50 to-cyan-50 p-4"><Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" /><p className="text-sm leading-6 text-slate-700">系统会自动查询词典中的标准发音、IPA音标、英文释义和例句，并把发音音频保存到腾讯云。无需教师录音。</p></div><div className="mt-6 grid gap-5"><label className="word-label">单元名称<input required value={title} onChange={(event) => setTitle(event.target.value)} className="word-input mt-2" placeholder="如：Unit 1 New College, New Life" /></label><label className="word-label">给学生的提示（选填）<input value={note} onChange={(event) => setNote(event.target.value)} className="word-input mt-2" placeholder="如：注意单词重音，建议佩戴耳机" /></label><label className="word-label">粘贴英文单词<textarea required rows={9} value={lines} onChange={(event) => setLines(event.target.value)} className="word-input mt-2 h-auto resize-y py-3 text-base leading-7" placeholder={'freshman | 大一新生\nmajor | 专业\ncontact\ndormitory'} /><span className="mt-2 block text-sm font-normal leading-6 text-slate-500">每行一个，也可用空格、逗号分隔；每次最多25个。需要中文释义时可写“单词 | 中文”。未填写中文时系统使用英文词典释义。</span></label><div className="flex flex-wrap gap-2">{entries.slice(0, 12).map((entry) => <span key={entry.term} className="word-chip">{entry.term}{entry.meaning ? ` · ${entry.meaning}` : ''}</span>)}{terms.length > 12 && <span className="word-chip">+{terms.length - 12}</span>}</div><div className="rounded-2xl bg-indigo-50 p-4 text-sm font-bold text-indigo-950">准备自动处理 {terms.length} 个单词{unit ? ` · 当前已有 ${unit.demoCount}/${unit.words.length} 个词典发音` : ''}</div>{progress && <p className="rounded-2xl bg-cyan-50 px-4 py-3 text-sm font-bold text-cyan-950">{progress}</p>}{error && <p className="word-error">{error}</p>}<div className="flex gap-3"><button type="button" onClick={onCancel} className="word-secondary flex-1">取消</button><button disabled={saving || !title || !terms.length} className="word-primary flex-1">{saving ? <><LoaderCircle className="h-5 w-5 animate-spin" />正在智能获取…</> : <><Sparkles className="h-5 w-5" />自动获取并保存</>}</button></div></div></form>;
+  return <form onSubmit={save} className="word-card p-6 sm:p-8"><div className="flex items-start justify-between gap-4"><div><p className="word-kicker">{unit ? '智能更新单元' : '智能新建单元'}</p><h2 className="mt-1 text-2xl font-black">输入单词或词组，其他交给系统</h2></div><button type="button" onClick={onCancel} className="word-icon"><X className="h-5 w-5" /></button></div><div className="mt-5 flex items-start gap-3 rounded-2xl bg-gradient-to-r from-indigo-50 to-cyan-50 p-4"><Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" /><p className="text-sm leading-6 text-slate-700">系统会自动查询词典中的标准发音、IPA音标、英文释义和例句，并把发音音频保存到腾讯云。无需教师录音。</p></div><div className="mt-6 grid gap-5"><label className="word-label">单元名称<input required value={title} onChange={(event) => setTitle(event.target.value)} className="word-input mt-2" placeholder="如：Unit 1 New College, New Life" /></label><label className="word-label">给学生的提示（选填）<input value={note} onChange={(event) => setNote(event.target.value)} className="word-input mt-2" placeholder="如：注意单词重音，建议佩戴耳机" /></label><label className="word-label">粘贴英文单词或词组<textarea required rows={10} value={lines} onChange={(event) => setLines(event.target.value)} className="word-input mt-2 h-auto resize-y py-3 text-base leading-7" placeholder={'freshman | 大一新生\nrailway locomotive | 铁道机车\nenergy storage technology\ncontact'} /><span className="mt-2 block text-sm font-normal leading-6 text-slate-500">每行一个单词或词组，也可用逗号、分号分隔；词组中的空格会保留，不再拆成多个单词。每个单元最多60项。需要中文释义时可写“单词或词组 | 中文”。</span></label><div className="flex flex-wrap gap-2">{entries.slice(0, 12).map((entry) => <span key={entry.term} className="word-chip">{entry.term}{entry.meaning ? ` · ${entry.meaning}` : ''}</span>)}{terms.length > 12 && <span className="word-chip">+{terms.length - 12}</span>}</div><div className="rounded-2xl bg-indigo-50 p-4 text-sm font-bold text-indigo-950">准备自动处理 {terms.length} 项{unit ? ` · 当前已有 ${unit.demoCount}/${unit.words.length} 项词典发音` : ''}{overflowCount ? ` · 已超过上限，后 ${overflowCount} 项暂不处理` : ''}</div>{progress && <p className="rounded-2xl bg-cyan-50 px-4 py-3 text-sm font-bold text-cyan-950">{progress}</p>}{error && <p className="word-error">{error}</p>}<div className="flex gap-3"><button type="button" onClick={onCancel} className="word-secondary flex-1">取消</button><button disabled={saving || !title || !terms.length} className="word-primary flex-1">{saving ? <><LoaderCircle className="h-5 w-5 animate-spin" />正在智能获取…</> : <><Sparkles className="h-5 w-5" />自动获取并保存</>}</button></div></div></form>;
+}
+
+function UnitQrDialog({ unit, onClose }: { unit: UnitRow; onClose: () => void }) {
+  const [imageUrl, setImageUrl] = useState(''); const [copied, setCopied] = useState(false); const url = shareUrl(unit);
+  useEffect(() => { void QRCode.toDataURL(url, { width: 420, margin: 2, errorCorrectionLevel: 'M', color: { dark: '#172033', light: '#ffffff' } }).then(setImageUrl); }, [url]);
+  useEffect(() => { const close = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); }; window.addEventListener('keydown', close); return () => window.removeEventListener('keydown', close); }, [onClose]);
+  async function copyLink() { await navigator.clipboard.writeText(url); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }
+  function download() { if (!imageUrl) return; const anchor = document.createElement('a'); anchor.href = imageUrl; anchor.download = `${unit.title.replace(/[\\/:*?"<>|]/g, '-')}-学生二维码.png`; anchor.click(); }
+  return <div className="word-modal" role="dialog" aria-modal="true" aria-labelledby="word-qr-title" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="word-card word-modal-card p-6 sm:p-8"><div className="flex items-start justify-between gap-4"><div><p className="word-kicker">发到学习通</p><h2 id="word-qr-title" className="mt-1 text-2xl font-black">{unit.title} 学生二维码</h2></div><button type="button" onClick={onClose} className="word-icon" aria-label="关闭二维码"><X className="h-5 w-5" /></button></div><div className="mt-5 grid justify-items-center rounded-2xl bg-slate-50 p-5">{imageUrl ? <img src={imageUrl} alt={`${unit.title}学生练习二维码`} className="h-auto w-full max-w-[320px] rounded-xl bg-white" /> : <LoaderCircle className="my-24 h-8 w-8 animate-spin text-indigo-600" />}<p className="mt-4 text-center text-sm font-bold text-slate-600">单元代码：{unit.share_code}</p><p className="mt-2 max-w-full break-all text-center text-xs leading-5 text-slate-500">{url}</p></div><div className="mt-5 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => void copyLink()} className="word-secondary"><Clipboard className="h-4 w-4" />{copied ? '已复制链接' : '复制学生链接'}</button><button type="button" onClick={download} disabled={!imageUrl} className="word-primary"><Download className="h-4 w-4" />下载二维码</button></div></section></div>;
 }
 
 function DictionaryWord({ word }: { word: WordItem }) {
@@ -109,7 +127,7 @@ function SharedLibrary({ rows, onApplied }: { rows: SharedUnitRow[]; onApplied: 
 }
 
 function TeacherApp() {
-  const [name, setName] = useState('教师'); const [tab, setTab] = useState<'units' | 'shared' | 'data'>('units'); const [units, setUnits] = useState<UnitRow[]>([]); const [sharedUnits, setSharedUnits] = useState<SharedUnitRow[]>([]); const [attempts, setAttempts] = useState<WordAttempt[]>([]); const [loading, setLoading] = useState(true); const [editing, setEditing] = useState<UnitRow | null | 'new'>(null); const [expanded, setExpanded] = useState(''); const [notice, setNotice] = useState('');
+  const [name, setName] = useState('教师'); const [tab, setTab] = useState<'units' | 'shared' | 'data'>('units'); const [units, setUnits] = useState<UnitRow[]>([]); const [sharedUnits, setSharedUnits] = useState<SharedUnitRow[]>([]); const [attempts, setAttempts] = useState<WordAttempt[]>([]); const [loading, setLoading] = useState(true); const [editing, setEditing] = useState<UnitRow | null | 'new'>(null); const [expanded, setExpanded] = useState(''); const [notice, setNotice] = useState(''); const [qrUnit, setQrUnit] = useState<UnitRow | null>(null);
   async function load() { setLoading(true); try { const session = await wordRequest<{ name: string }>('session', {}, getWordToken()); setName(session.name); const [unitData, sharedData, attemptData] = await Promise.all([wordRequest<{ rows: UnitRow[] }>('teacherListUnits', {}, getWordToken()), wordRequest<{ rows: SharedUnitRow[] }>('teacherListSharedUnits', {}, getWordToken()), wordRequest<{ rows: WordAttempt[] }>('listAttempts', {}, getWordToken())]); setUnits(unitData.rows || []); setSharedUnits(sharedData.rows || []); setAttempts(attemptData.rows || []); } catch { clearWordSession(); window.location.reload(); } finally { setLoading(false); } }
   useEffect(() => { void load(); }, []);
   async function publish(unit: UnitRow) { setNotice(''); try { await wordRequest('teacherPublishUnit', { unitId: unit.id }, getWordToken()); setNotice(`“${unit.title}”已实时发布，可以把学生链接发到学习通。`); await load(); } catch (requestError) { setNotice(requestError instanceof Error ? requestError.message : '发布失败。'); } }
@@ -135,7 +153,7 @@ function TeacherApp() {
               {units.map((unit) => <article key={unit.id} className="word-card overflow-hidden">
                 <div className="flex flex-wrap items-center justify-between gap-4 p-5">
                   <button onClick={() => setExpanded(expanded === unit.id ? '' : unit.id)} className="flex min-w-0 flex-1 items-center gap-4 text-left"><div className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${unit.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}><BookOpenCheck /></div><div className="min-w-0"><h3 className="truncate text-lg font-black">{unit.title}</h3><p className="mt-1 text-sm text-slate-500">{unit.words.length} 个单词 · 词典发音 {unit.demoCount}/{unit.words.length} · {unit.status === 'published' ? '已发布并共享' : '草稿'}</p>{unit.copied_from_teacher && <p className="mt-1 text-xs font-bold text-cyan-700">应用自 {unit.copied_from_teacher}</p>}</div><ChevronDown className={`ml-auto h-5 w-5 transition ${expanded === unit.id ? 'rotate-180' : ''}`} /></button>
-                  <div className="flex flex-wrap gap-2"><button onClick={() => setEditing(unit)} className="word-secondary text-sm"><Sparkles className="h-4 w-4" />智能编辑</button>{unit.status === 'published' && <button onClick={() => void copy(unit)} className="word-secondary text-sm"><Clipboard className="h-4 w-4" />复制学生链接</button>}<button onClick={() => void publish(unit)} className="word-primary text-sm"><Radio className="h-4 w-4" />{unit.status === 'published' ? '重新发布' : '实时发布'}</button></div>
+                  <div className="flex flex-wrap gap-2"><button onClick={() => setEditing(unit)} className="word-secondary text-sm"><Sparkles className="h-4 w-4" />智能编辑</button>{unit.status === 'published' && <><button onClick={() => void copy(unit)} className="word-secondary text-sm"><Clipboard className="h-4 w-4" />复制学生链接</button><button onClick={() => setQrUnit(unit)} className="word-secondary text-sm"><QrCode className="h-4 w-4" />学生二维码</button></>}<button onClick={() => void publish(unit)} className="word-primary text-sm"><Radio className="h-4 w-4" />{unit.status === 'published' ? '重新发布' : '实时发布'}</button></div>
                 </div>
                 {expanded === unit.id && <div className="border-t border-slate-200 bg-slate-50 p-5"><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-bold text-slate-600">发音、音标、释义和例句已由系统自动获取；发布后自动进入共享任务库。</p><span className="word-pill">单元代码 {unit.share_code}</span></div><div className="grid gap-3 lg:grid-cols-2">{unit.words.map((word) => <DictionaryWord key={word.id} word={word} />)}</div></div>}
               </article>)}
@@ -147,6 +165,7 @@ function TeacherApp() {
         {!loading && tab === 'shared' && <div className="mt-5"><SharedLibrary rows={sharedUnits} onApplied={applied} /></div>}
         {!loading && tab === 'data' && <div className="mt-5"><Metrics attempts={attempts} /><div className="word-card mt-5 p-5"><AttemptsTable rows={attempts} showTeacher /></div></div>}
       </section>
+      {qrUnit && <UnitQrDialog unit={qrUnit} onClose={() => setQrUnit(null)} />}
     </main>
   );
 }
