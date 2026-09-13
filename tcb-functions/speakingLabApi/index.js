@@ -1,7 +1,13 @@
 /* oxlint-disable typescript/no-require-imports */
 const cloudbase = require('@cloudbase/node-sdk');
 const { asr } = require('tencentcloud-sdk-nodejs-asr');
-const { createHash, pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual } = require('node:crypto');
+const {
+  createHash,
+  pbkdf2Sync,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} = require('node:crypto');
 
 const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
 const db = app.database();
@@ -11,8 +17,33 @@ const SESSIONS = 'speaking_sessions';
 const RATES = 'speaking_rates';
 const RECOGNITION_CHUNKS = 'speaking_recognition_chunks';
 const SESSION_MS = 8 * 60 * 60 * 1000;
-const PASSWORD_SALT = 'db0ec8f7c8632bb51ebccc49114ba1f8';
-const PASSWORD_HASH = '7847a75d46d7436bca0f3895644ae0cff889215c859ba3390aaa5aa5f5f53cb8';
+const AUTH_VERSION = 2;
+const TEACHER_ACCOUNTS = {
+  cherie: {
+    code: 'cherie',
+    name: 'Cherie',
+    salt: '20fe6fc48b2726552878d0a1d169be7a',
+    hash: '1ca5b76748e94a4d4abfbc0e7ccdfcebf97693871d2c6573093cf377e9fdedfc',
+  },
+  lisa: {
+    code: 'lisa',
+    name: 'Lisa',
+    salt: 'ebcd2b7c67e1067c0e2518b84ec96158',
+    hash: 'c3f48c521a5a58e2a421ec7d8b4d67e9d99f9e8e0ef424299f5723a0950dadf2',
+  },
+  alice: {
+    code: 'alice',
+    name: 'Alice',
+    salt: 'e73f74c75887bd40b509d8a9ab3958c2',
+    hash: '2aaf431361728efa852e7fbdd10df5fa6a52ff8c4aae47841092025dbbc03905',
+  },
+  july: {
+    code: 'july',
+    name: 'July',
+    salt: '9f5aa832e98332de5c2ef9c43cdcd8e7',
+    hash: '67d2ae9f437bc88b6a5c2fe7c99c4342d76ab1bc3232f6c2ab012f88c4cf3999',
+  },
+};
 const MAX_CLIP_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 4.5 * 1024 * 1024;
 const MAX_RECOGNITION_BYTES = 2 * 1024 * 1024;
@@ -20,7 +51,12 @@ const SCENES = new Set(['dormitory', 'club', 'classroom', 'canteen']);
 const SCENE_HOTWORDS = {
   dormitory: ['dormitory', 'roommate', 'freshman', 'major', 'WeChat'],
   club: ['Debate Club', 'Cycling Club', 'beginner', 'sign up', 'interested'],
-  classroom: ['do me a favor', 'signal diagram', 'circuit diagram', 'work together'],
+  classroom: [
+    'do me a favor',
+    'signal diagram',
+    'circuit diagram',
+    'work together',
+  ],
   canteen: ['canteen', 'bamboo shoots', 'pizza', 'flavor', 'second floor'],
 };
 const ALLOWED_ORIGINS = new Set([
@@ -33,12 +69,19 @@ let collectionsReady;
 let asrClient;
 
 function headersFrom(event) {
-  return Object.fromEntries(Object.entries(event.headers || {}).map(([key, value]) => [key.toLowerCase(), String(value)]));
+  return Object.fromEntries(
+    Object.entries(event.headers || {}).map(([key, value]) => [
+      key.toLowerCase(),
+      String(value),
+    ]),
+  );
 }
 
 function corsOrigin(event) {
   const origin = headersFrom(event).origin || '';
-  return ALLOWED_ORIGINS.has(origin) ? origin : 'https://1274526084-dot.github.io';
+  return ALLOWED_ORIGINS.has(origin)
+    ? origin
+    : 'https://1274526084-dot.github.io';
 }
 
 function response(event, statusCode, value) {
@@ -59,7 +102,9 @@ function response(event, statusCode, value) {
 function parseBody(event) {
   if (event.body && typeof event.body === 'object') return event.body;
   const encoded = typeof event.body === 'string' ? event.body : '';
-  const raw = event.isBase64Encoded ? Buffer.from(encoded, 'base64').toString('utf8') : encoded;
+  const raw = event.isBase64Encoded
+    ? Buffer.from(encoded, 'base64').toString('utf8')
+    : encoded;
   return raw ? JSON.parse(raw) : {};
 }
 
@@ -78,7 +123,11 @@ function sha256(value) {
 
 function isCollectionExistsError(error) {
   const value = `${error?.code || ''} ${error?.message || ''}`.toLowerCase();
-  return value.includes('exist') || value.includes('已存在') || value.includes('-502005');
+  return (
+    value.includes('exist') ||
+    value.includes('已存在') ||
+    value.includes('-502005')
+  );
 }
 
 async function ensureCollections() {
@@ -99,7 +148,9 @@ async function ensureCollections() {
 async function getDocument(collection, id) {
   try {
     const result = await db.collection(collection).doc(id).get();
-    return Array.isArray(result.data) ? result.data[0] || null : result.data || null;
+    return Array.isArray(result.data)
+      ? result.data[0] || null
+      : result.data || null;
   } catch {
     return null;
   }
@@ -107,13 +158,25 @@ async function getDocument(collection, id) {
 
 function clientIp(event) {
   const headers = headersFrom(event);
-  return String(event.requestContext?.sourceIp || headers['x-forwarded-for'] || headers['x-real-ip'] || 'unknown').split(',')[0].trim();
+  return String(
+    event.requestContext?.sourceIp ||
+      headers['x-forwarded-for'] ||
+      headers['x-real-ip'] ||
+      'unknown',
+  )
+    .split(',')[0]
+    .trim();
 }
 
-function passwordMatches(password) {
-  if (typeof password !== 'string' || password.length < 8 || password.length > 128) return false;
-  const actual = pbkdf2Sync(password, PASSWORD_SALT, 210000, 32, 'sha256');
-  const expected = Buffer.from(PASSWORD_HASH, 'hex');
+function teacherPasswordMatches(password, teacher) {
+  if (
+    typeof password !== 'string' ||
+    password.length < 8 ||
+    password.length > 128
+  )
+    return false;
+  const actual = pbkdf2Sync(password, teacher.salt, 210000, 32, 'sha256');
+  const expected = Buffer.from(teacher.hash, 'hex');
   return expected.length === actual.length && timingSafeEqual(actual, expected);
 }
 
@@ -122,13 +185,24 @@ async function checkLoginRate(event, successful) {
   const now = Date.now();
   const current = await getDocument(RATES, id);
   const active = current && Number(current.reset_at) > now;
-  if (active && Number(current.count) >= 8 && !successful) return { blocked: true };
+  if (active && Number(current.count) >= 8 && !successful)
+    return { blocked: true };
   if (successful) {
-    await db.collection(RATES).doc(id).remove().catch(() => undefined);
+    await db
+      .collection(RATES)
+      .doc(id)
+      .remove()
+      .catch(() => undefined);
     return { blocked: false };
   }
   const count = active ? Number(current.count || 0) + 1 : 1;
-  await db.collection(RATES).doc(id).set({ count, reset_at: active ? Number(current.reset_at) : now + 15 * 60 * 1000 });
+  await db
+    .collection(RATES)
+    .doc(id)
+    .set({
+      count,
+      reset_at: active ? Number(current.reset_at) : now + 15 * 60 * 1000,
+    });
   return { blocked: count >= 8 };
 }
 
@@ -138,7 +212,13 @@ async function checkSubmissionRate(event) {
   const current = await getDocument(RATES, id);
   const active = current && Number(current.reset_at) > now;
   const count = active ? Number(current.count || 0) + 1 : 1;
-  await db.collection(RATES).doc(id).set({ count, reset_at: active ? Number(current.reset_at) : now + 15 * 60 * 1000 });
+  await db
+    .collection(RATES)
+    .doc(id)
+    .set({
+      count,
+      reset_at: active ? Number(current.reset_at) : now + 15 * 60 * 1000,
+    });
   return count <= 12;
 }
 
@@ -148,24 +228,40 @@ async function checkRecognitionRate(event) {
   const current = await getDocument(RATES, id);
   const active = current && Number(current.reset_at) > now;
   const count = active ? Number(current.count || 0) + 1 : 1;
-  await db.collection(RATES).doc(id).set({ count, reset_at: active ? Number(current.reset_at) : now + 15 * 60 * 1000 });
+  await db
+    .collection(RATES)
+    .doc(id)
+    .set({
+      count,
+      reset_at: active ? Number(current.reset_at) : now + 15 * 60 * 1000,
+    });
   return count <= 45;
 }
 
 async function validSession(token) {
-  if (!/^[0-9a-f]{64}$/i.test(String(token || ''))) return false;
+  if (!/^[0-9a-f]{64}$/i.test(String(token || ''))) return null;
   const id = sha256(token);
   const session = await getDocument(SESSIONS, id);
-  if (!session || Number(session.expires_at) <= Date.now()) {
-    if (session) await db.collection(SESSIONS).doc(id).remove().catch(() => undefined);
-    return false;
+  if (
+    !session ||
+    Number(session.expires_at) <= Date.now() ||
+    Number(session.auth_version) !== AUTH_VERSION
+  ) {
+    if (session)
+      await db
+        .collection(SESSIONS)
+        .doc(id)
+        .remove()
+        .catch(() => undefined);
+    return null;
   }
-  return true;
+  return session;
 }
 
 function extensionFor(type) {
   if (String(type).includes('ogg')) return 'ogg';
-  if (String(type).includes('mp4') || String(type).includes('m4a')) return 'm4a';
+  if (String(type).includes('mp4') || String(type).includes('m4a'))
+    return 'm4a';
   return 'webm';
 }
 
@@ -183,34 +279,60 @@ function voiceFormatFor(type) {
 function getAsrClient() {
   if (asrClient) return asrClient;
   const context = cloudbase.getCloudbaseContext();
-  const secretId = context.TENCENTCLOUD_SECRETID || process.env.TENCENTCLOUD_SECRETID || process.env.TENCENTCLOUD_SECRET_ID;
-  const secretKey = context.TENCENTCLOUD_SECRETKEY || process.env.TENCENTCLOUD_SECRETKEY || process.env.TENCENTCLOUD_SECRET_KEY;
-  const token = context.TENCENTCLOUD_SESSIONTOKEN || process.env.TENCENTCLOUD_SESSIONTOKEN || process.env.TENCENTCLOUD_TOKEN;
-  if (!secretId || !secretKey) throw new Error('ASR_RUNTIME_CREDENTIALS_MISSING');
+  const secretId =
+    context.TENCENTCLOUD_SECRETID ||
+    process.env.TENCENTCLOUD_SECRETID ||
+    process.env.TENCENTCLOUD_SECRET_ID;
+  const secretKey =
+    context.TENCENTCLOUD_SECRETKEY ||
+    process.env.TENCENTCLOUD_SECRETKEY ||
+    process.env.TENCENTCLOUD_SECRET_KEY;
+  const token =
+    context.TENCENTCLOUD_SESSIONTOKEN ||
+    process.env.TENCENTCLOUD_SESSIONTOKEN ||
+    process.env.TENCENTCLOUD_TOKEN;
+  if (!secretId || !secretKey)
+    throw new Error('ASR_RUNTIME_CREDENTIALS_MISSING');
   const Client = asr.v20190614.Client;
   asrClient = new Client({
     credential: { secretId, secretKey, token },
     region: '',
-    profile: { httpProfile: { endpoint: 'asr.tencentcloudapi.com', reqTimeout: 12 } },
+    profile: {
+      httpProfile: { endpoint: 'asr.tencentcloudapi.com', reqTimeout: 12 },
+    },
   });
   return asrClient;
 }
 
 async function handleRecognize(event, body) {
   if (!(await checkRecognitionRate(event))) {
-    return response(event, 429, { ok: false, error: '识别请求较多，请稍等一分钟再试。' });
+    return response(event, 429, {
+      ok: false,
+      error: '识别请求较多，请稍等一分钟再试。',
+    });
   }
   const sceneId = cleanText(body.sceneId, 30);
   const audio = body.audio || {};
   const type = cleanText(audio.type, 80);
   const format = voiceFormatFor(type);
   const data = typeof audio.data === 'string' ? audio.data : '';
-  if (!SCENES.has(sceneId) || !format || !data || data.length > Math.ceil(MAX_RECOGNITION_BYTES * 4 / 3) + 8) {
-    return response(event, 400, { ok: false, error: '这段录音无法识别，请重新录制。' });
+  if (
+    !SCENES.has(sceneId) ||
+    !format ||
+    !data ||
+    data.length > Math.ceil((MAX_RECOGNITION_BYTES * 4) / 3) + 8
+  ) {
+    return response(event, 400, {
+      ok: false,
+      error: '这段录音无法识别，请重新录制。',
+    });
   }
   const buffer = Buffer.from(data, 'base64');
   if (!buffer.length || buffer.length > MAX_RECOGNITION_BYTES) {
-    return response(event, 400, { ok: false, error: '录音过长，请缩短回答后重新录制。' });
+    return response(event, 400, {
+      ok: false,
+      error: '录音过长，请缩短回答后重新录制。',
+    });
   }
   try {
     const result = await getAsrClient().SentenceRecognition({
@@ -224,7 +346,9 @@ async function handleRecognize(event, body) {
       FilterModal: 0,
       FilterPunc: 0,
       ConvertNumMode: 1,
-      HotwordList: (SCENE_HOTWORDS[sceneId] || []).map((word) => `${word}|6`).join(','),
+      HotwordList: (SCENE_HOTWORDS[sceneId] || [])
+        .map((word) => `${word}|6`)
+        .join(','),
     });
     const transcript = cleanText(result.Result, 1000);
     return response(event, 200, {
@@ -234,12 +358,19 @@ async function handleRecognize(event, body) {
     });
   } catch (error) {
     const details = `${error?.code || ''} ${error?.message || ''}`;
-    console.error('speakingLab recognize failed', details, error?.requestId || '');
-    if (/not.*activate|notactivated|service.*open|unauthorized/i.test(details)) {
+    console.error(
+      'speakingLab recognize failed',
+      details,
+      error?.requestId || '',
+    );
+    if (
+      /not.*activate|notactivated|service.*open|unauthorized/i.test(details)
+    ) {
       return response(event, 503, {
         ok: false,
         code: cleanText(error?.code, 100),
-        error: '腾讯云语音识别尚未开通或没有调用权限。录音仍已保留，可以手动输入或继续下一问。',
+        error:
+          '腾讯云语音识别尚未开通或没有调用权限。录音仍已保留，可以手动输入或继续下一问。',
       });
     }
     return response(event, 502, {
@@ -252,7 +383,10 @@ async function handleRecognize(event, body) {
 
 async function handleRecognizeChunk(event, body) {
   if (!(await checkRecognitionRate(event))) {
-    return response(event, 429, { ok: false, error: '识别请求较多，请稍等一分钟再试。' });
+    return response(event, 429, {
+      ok: false,
+      error: '识别请求较多，请稍等一分钟再试。',
+    });
   }
   const uploadId = cleanText(body.uploadId, 80);
   const sceneId = cleanText(body.sceneId, 30);
@@ -268,11 +402,17 @@ async function handleRecognizeChunk(event, body) {
     !data ||
     data.length > 65000
   ) {
-    return response(event, 400, { ok: false, error: '录音分片无效，请重新录制。' });
+    return response(event, 400, {
+      ok: false,
+      error: '录音分片无效，请重新录制。',
+    });
   }
   const decoded = Buffer.from(data, 'base64');
   if (!decoded.length || decoded.length > 50000) {
-    return response(event, 400, { ok: false, error: '录音分片过大，请重新录制。' });
+    return response(event, 400, {
+      ok: false,
+      error: '录音分片过大，请重新录制。',
+    });
   }
   const ipHash = sha256(clientIp(event));
   const chunkId = `asr-${uploadId}-${chunkIndex}`;
@@ -287,44 +427,107 @@ async function handleRecognizeChunk(event, body) {
     created_at: Date.now(),
   });
   if (chunkIndex + 1 < totalChunks) {
-    return response(event, 200, { ok: true, pending: true, received: chunkIndex + 1 });
+    return response(event, 200, {
+      ok: true,
+      pending: true,
+      received: chunkIndex + 1,
+    });
   }
 
-  const chunkIds = Array.from({ length: totalChunks }, (_, index) => `asr-${uploadId}-${index}`);
+  const chunkIds = Array.from(
+    { length: totalChunks },
+    (_, index) => `asr-${uploadId}-${index}`,
+  );
   try {
-    const rows = await Promise.all(chunkIds.map((id) => getDocument(RECOGNITION_CHUNKS, id)));
-    if (rows.some((row, index) =>
-      !row || row.ip_hash !== ipHash || row.upload_id !== uploadId || row.scene_id !== sceneId ||
-      row.type !== type || Number(row.chunk_index) !== index || Number(row.total_chunks) !== totalChunks
-    )) {
-      return response(event, 400, { ok: false, error: '录音分片不完整，请重新录制。' });
+    const rows = await Promise.all(
+      chunkIds.map((id) => getDocument(RECOGNITION_CHUNKS, id)),
+    );
+    if (
+      rows.some(
+        (row, index) =>
+          !row ||
+          row.ip_hash !== ipHash ||
+          row.upload_id !== uploadId ||
+          row.scene_id !== sceneId ||
+          row.type !== type ||
+          Number(row.chunk_index) !== index ||
+          Number(row.total_chunks) !== totalChunks,
+      )
+    ) {
+      return response(event, 400, {
+        ok: false,
+        error: '录音分片不完整，请重新录制。',
+      });
     }
-    const audioBuffer = Buffer.concat(rows.map((row) => Buffer.from(row.data, 'base64')));
+    const audioBuffer = Buffer.concat(
+      rows.map((row) => Buffer.from(row.data, 'base64')),
+    );
     if (!audioBuffer.length || audioBuffer.length > MAX_RECOGNITION_BYTES) {
-      return response(event, 400, { ok: false, error: '回答时间过长，请缩短后重新录制。' });
+      return response(event, 400, {
+        ok: false,
+        error: '回答时间过长，请缩短后重新录制。',
+      });
     }
     return await handleRecognize(event, {
       sceneId,
       audio: { type, data: audioBuffer.toString('base64') },
     });
   } finally {
-    await Promise.all(chunkIds.map((id) => db.collection(RECOGNITION_CHUNKS).doc(id).remove().catch(() => undefined)));
+    await Promise.all(
+      chunkIds.map((id) =>
+        db
+          .collection(RECOGNITION_CHUNKS)
+          .doc(id)
+          .remove()
+          .catch(() => undefined),
+      ),
+    );
   }
 }
 
 async function handleLogin(event, body) {
   const current = await checkLoginRate(event, false);
-  if (current.blocked) return response(event, 429, { ok: false, error: '尝试次数过多，请15分钟后再试。' });
-  const valid = passwordMatches(body.password);
-  if (!valid) return response(event, 401, { ok: false, error: '密码不正确，请重试。' });
+  if (current.blocked)
+    return response(event, 429, {
+      ok: false,
+      error: '尝试次数过多，请15分钟后再试。',
+    });
+  const code = cleanText(body.code, 20).toLowerCase();
+  const teacher = TEACHER_ACCOUNTS[code];
+  const valid = Boolean(
+    teacher && teacherPasswordMatches(body.password, teacher),
+  );
+  if (!valid)
+    return response(event, 401, {
+      ok: false,
+      error: '教师账号或密码不正确，请重试。',
+    });
   await checkLoginRate(event, true);
   const token = randomBytes(32).toString('hex');
-  await db.collection(SESSIONS).doc(sha256(token)).set({ created_at: Date.now(), expires_at: Date.now() + SESSION_MS });
-  return response(event, 200, { ok: true, token });
+  await db
+    .collection(SESSIONS)
+    .doc(sha256(token))
+    .set({
+      auth_version: AUTH_VERSION,
+      teacher_code: teacher.code,
+      teacher_name: teacher.name,
+      created_at: Date.now(),
+      expires_at: Date.now() + SESSION_MS,
+    });
+  return response(event, 200, {
+    ok: true,
+    token,
+    code: teacher.code,
+    name: teacher.name,
+  });
 }
 
 async function handleSubmit(event, body) {
-  if (!(await checkSubmissionRate(event))) return response(event, 429, { ok: false, error: '提交次数过多，请稍后再试。' });
+  if (!(await checkSubmissionRate(event)))
+    return response(event, 429, {
+      ok: false,
+      error: '提交次数过多，请稍后再试。',
+    });
   const payload = body.payload || {};
   const studentName = cleanText(payload.studentName, 40);
   const studentId = cleanText(payload.studentId, 40);
@@ -335,11 +538,27 @@ async function handleSubmit(event, body) {
   const feedback = cleanText(payload.feedback, 1000);
   const clips = Array.isArray(body.audio) ? body.audio.slice(0, 4) : [];
 
-  if (!studentName || !studentId || !className || !SCENES.has(sceneId) || !transcript) {
-    return response(event, 400, { ok: false, error: '请填写姓名、学号和班级，并完成三轮对话。' });
+  if (
+    !studentName ||
+    !studentId ||
+    !className ||
+    !SCENES.has(sceneId) ||
+    !transcript
+  ) {
+    return response(event, 400, {
+      ok: false,
+      error: '请填写姓名、学号和班级，并完成三轮对话。',
+    });
   }
-  if (payload.recordingConsent !== true || clips.length < 1 || clips.length > 3) {
-    return response(event, 400, { ok: false, error: '正式提交需要同意上传一至三段练习录音。' });
+  if (
+    payload.recordingConsent !== true ||
+    clips.length < 1 ||
+    clips.length > 3
+  ) {
+    return response(event, 400, {
+      ok: false,
+      error: '正式提交需要同意上传一至三段练习录音。',
+    });
   }
 
   const decoded = [];
@@ -348,17 +567,31 @@ async function handleSubmit(event, body) {
     const clip = clips[index] || {};
     const type = cleanText(clip.type, 80) || 'audio/webm';
     const data = typeof clip.data === 'string' ? clip.data : '';
-    if (!type.startsWith('audio/') || !data || data.length > Math.ceil(MAX_CLIP_BYTES * 4 / 3) + 8) {
-      return response(event, 400, { ok: false, error: '录音格式或大小不符合要求，请重新录制。' });
+    if (
+      !type.startsWith('audio/') ||
+      !data ||
+      data.length > Math.ceil((MAX_CLIP_BYTES * 4) / 3) + 8
+    ) {
+      return response(event, 400, {
+        ok: false,
+        error: '录音格式或大小不符合要求，请重新录制。',
+      });
     }
     const buffer = Buffer.from(data, 'base64');
     if (!buffer.length || buffer.length > MAX_CLIP_BYTES) {
-      return response(event, 400, { ok: false, error: '单段录音过长，请重新录制。' });
+      return response(event, 400, {
+        ok: false,
+        error: '单段录音过长，请重新录制。',
+      });
     }
     totalBytes += buffer.length;
     decoded.push({ round: cleanInt(clip.round, 1, 3), type, buffer });
   }
-  if (totalBytes > MAX_TOTAL_BYTES) return response(event, 400, { ok: false, error: '本次录音总长度过大，请重新录制。' });
+  if (totalBytes > MAX_TOTAL_BYTES)
+    return response(event, 400, {
+      ok: false,
+      error: '本次录音总长度过大，请重新录制。',
+    });
 
   const id = randomUUID();
   const submittedAt = Date.now();
@@ -368,10 +601,18 @@ async function handleSubmit(event, body) {
   try {
     for (const clip of decoded) {
       const cloudPath = `july-speaking-lab/audio/${date}/${id}/round-${clip.round}.${extensionFor(clip.type)}`;
-      const upload = await app.uploadFile({ cloudPath, fileContent: clip.buffer });
+      const upload = await app.uploadFile({
+        cloudPath,
+        fileContent: clip.buffer,
+      });
       if (!upload.fileID) throw new Error('Audio upload did not return fileID');
       uploaded.push(upload.fileID);
-      manifest.push({ key: upload.fileID, type: clip.type, size: clip.buffer.length, round: clip.round });
+      manifest.push({
+        key: upload.fileID,
+        type: clip.type,
+        size: clip.buffer.length,
+        round: clip.round,
+      });
     }
 
     const attempt = {
@@ -383,7 +624,10 @@ async function handleSubmit(event, body) {
       scene_title: sceneTitle,
       transcript,
       coverage: cleanInt(payload.coverage, 0, 100),
-      confidence: payload.confidence == null ? null : cleanInt(payload.confidence, 0, 100),
+      confidence:
+        payload.confidence == null
+          ? null
+          : cleanInt(payload.confidence, 0, 100),
       duration_seconds: cleanInt(payload.durationSeconds, 1, 7200),
       attempts: cleanInt(payload.attempts, 1, 20),
       task_score: cleanInt(payload.taskScore, 0, 40),
@@ -397,9 +641,13 @@ async function handleSubmit(event, body) {
     };
     await db.collection(ATTEMPTS).doc(id).set(attempt);
   } catch (error) {
-    if (uploaded.length) await app.deleteFile({ fileList: uploaded }).catch(() => undefined);
+    if (uploaded.length)
+      await app.deleteFile({ fileList: uploaded }).catch(() => undefined);
     console.error('speakingLab submit failed', error?.message || error);
-    return response(event, 500, { ok: false, error: '上传未完成，请检查网络后重试。' });
+    return response(event, 500, {
+      ok: false,
+      error: '上传未完成，请检查网络后重试。',
+    });
   }
   return response(event, 200, { ok: true, id });
 }
@@ -418,8 +666,17 @@ async function temporaryUrlMap(fileIds) {
 }
 
 async function handleList(event, body) {
-  if (!(await validSession(body.token))) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
-  const result = await db.collection(ATTEMPTS).orderBy('submitted_at', 'desc').limit(300).get();
+  const session = await validSession(body.token);
+  if (!session)
+    return response(event, 401, {
+      ok: false,
+      error: '登录已失效，请重新登录。',
+    });
+  const result = await db
+    .collection(ATTEMPTS)
+    .orderBy('submitted_at', 'desc')
+    .limit(300)
+    .get();
   const rows = Array.isArray(result.data) ? result.data : [];
   const fileIds = [];
   const manifests = rows.map((row) => {
@@ -435,9 +692,18 @@ async function handleList(event, body) {
   const urls = await temporaryUrlMap(fileIds);
   const hydratedRows = rows.map((row, index) => ({
     ...row,
-    audio_manifest: JSON.stringify(manifests[index].map((item) => ({ ...item, url: urls.get(item.key) || '' }))),
+    audio_manifest: JSON.stringify(
+      manifests[index].map((item) => ({
+        ...item,
+        url: urls.get(item.key) || '',
+      })),
+    ),
   }));
-  return response(event, 200, { ok: true, rows: hydratedRows });
+  return response(event, 200, {
+    ok: true,
+    teacherName: session.teacher_name,
+    rows: hydratedRows,
+  });
 }
 
 exports.main = async (event) => {
@@ -453,19 +719,32 @@ exports.main = async (event) => {
     if (action === 'submit') return handleSubmit(event, body);
     if (action === 'teacherLogin') return handleLogin(event, body);
     if (action === 'session') {
-      const ok = await validSession(body.token);
-      return response(event, ok ? 200 : 401, ok ? { ok: true } : { ok: false, error: '登录已失效，请重新登录。' });
+      const session = await validSession(body.token);
+      return response(
+        event,
+        session ? 200 : 401,
+        session
+          ? { ok: true, code: session.teacher_code, name: session.teacher_name }
+          : { ok: false, error: '登录已失效，请重新登录。' },
+      );
     }
     if (action === 'list') return handleList(event, body);
     if (action === 'logout') {
       if (/^[0-9a-f]{64}$/i.test(String(body.token || ''))) {
-        await db.collection(SESSIONS).doc(sha256(body.token)).remove().catch(() => undefined);
+        await db
+          .collection(SESSIONS)
+          .doc(sha256(body.token))
+          .remove()
+          .catch(() => undefined);
       }
       return response(event, 200, { ok: true });
     }
     return response(event, 404, { ok: false, error: '未知操作。' });
   } catch (error) {
     console.error('speakingLab API failed', error?.message || error);
-    return response(event, 500, { ok: false, error: '服务暂时不可用，请稍后重试。' });
+    return response(event, 500, {
+      ok: false,
+      error: '服务暂时不可用，请稍后重试。',
+    });
   }
 };
