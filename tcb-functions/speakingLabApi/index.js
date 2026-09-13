@@ -1,5 +1,6 @@
 /* oxlint-disable typescript/no-require-imports */
 const cloudbase = require('@cloudbase/node-sdk');
+const { asr } = require('tencentcloud-sdk-nodejs-asr');
 const { createHash, pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual } = require('node:crypto');
 
 const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
@@ -8,12 +9,20 @@ const db = app.database();
 const ATTEMPTS = 'speaking_attempts';
 const SESSIONS = 'speaking_sessions';
 const RATES = 'speaking_rates';
+const RECOGNITION_CHUNKS = 'speaking_recognition_chunks';
 const SESSION_MS = 8 * 60 * 60 * 1000;
 const PASSWORD_SALT = 'db0ec8f7c8632bb51ebccc49114ba1f8';
 const PASSWORD_HASH = '7847a75d46d7436bca0f3895644ae0cff889215c859ba3390aaa5aa5f5f53cb8';
 const MAX_CLIP_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 4.5 * 1024 * 1024;
+const MAX_RECOGNITION_BYTES = 2 * 1024 * 1024;
 const SCENES = new Set(['dormitory', 'club', 'classroom', 'canteen']);
+const SCENE_HOTWORDS = {
+  dormitory: ['dormitory', 'roommate', 'freshman', 'major', 'WeChat'],
+  club: ['Debate Club', 'Cycling Club', 'beginner', 'sign up', 'interested'],
+  classroom: ['do me a favor', 'signal diagram', 'circuit diagram', 'work together'],
+  canteen: ['canteen', 'bamboo shoots', 'pizza', 'flavor', 'second floor'],
+};
 const ALLOWED_ORIGINS = new Set([
   'https://1274526084-dot.github.io',
   'http://localhost:4173',
@@ -21,6 +30,7 @@ const ALLOWED_ORIGINS = new Set([
 ]);
 
 let collectionsReady;
+let asrClient;
 
 function headersFrom(event) {
   return Object.fromEntries(Object.entries(event.headers || {}).map(([key, value]) => [key.toLowerCase(), String(value)]));
@@ -74,7 +84,7 @@ function isCollectionExistsError(error) {
 async function ensureCollections() {
   if (!collectionsReady) {
     collectionsReady = (async () => {
-      for (const name of [ATTEMPTS, SESSIONS, RATES]) {
+      for (const name of [ATTEMPTS, SESSIONS, RATES, RECOGNITION_CHUNKS]) {
         try {
           await db.createCollection(name);
         } catch (error) {
@@ -132,6 +142,16 @@ async function checkSubmissionRate(event) {
   return count <= 12;
 }
 
+async function checkRecognitionRate(event) {
+  const id = `recognize-${sha256(clientIp(event)).slice(0, 44)}`;
+  const now = Date.now();
+  const current = await getDocument(RATES, id);
+  const active = current && Number(current.reset_at) > now;
+  const count = active ? Number(current.count || 0) + 1 : 1;
+  await db.collection(RATES).doc(id).set({ count, reset_at: active ? Number(current.reset_at) : now + 15 * 60 * 1000 });
+  return count <= 45;
+}
+
 async function validSession(token) {
   if (!/^[0-9a-f]{64}$/i.test(String(token || ''))) return false;
   const id = sha256(token);
@@ -147,6 +167,149 @@ function extensionFor(type) {
   if (String(type).includes('ogg')) return 'ogg';
   if (String(type).includes('mp4') || String(type).includes('m4a')) return 'm4a';
   return 'webm';
+}
+
+function voiceFormatFor(type) {
+  const value = String(type || '').toLowerCase();
+  if (value.includes('wav')) return 'wav';
+  if (value.includes('mpeg') || value.includes('mp3')) return 'mp3';
+  if (value.includes('m4a') || value.includes('mp4')) return 'm4a';
+  if (value.includes('aac')) return 'aac';
+  if (value.includes('amr')) return 'amr';
+  if (value.includes('ogg')) return 'ogg-opus';
+  return '';
+}
+
+function getAsrClient() {
+  if (asrClient) return asrClient;
+  const context = cloudbase.getCloudbaseContext();
+  const secretId = context.TENCENTCLOUD_SECRETID || process.env.TENCENTCLOUD_SECRETID || process.env.TENCENTCLOUD_SECRET_ID;
+  const secretKey = context.TENCENTCLOUD_SECRETKEY || process.env.TENCENTCLOUD_SECRETKEY || process.env.TENCENTCLOUD_SECRET_KEY;
+  const token = context.TENCENTCLOUD_SESSIONTOKEN || process.env.TENCENTCLOUD_SESSIONTOKEN || process.env.TENCENTCLOUD_TOKEN;
+  if (!secretId || !secretKey) throw new Error('ASR_RUNTIME_CREDENTIALS_MISSING');
+  const Client = asr.v20190614.Client;
+  asrClient = new Client({
+    credential: { secretId, secretKey, token },
+    region: '',
+    profile: { httpProfile: { endpoint: 'asr.tencentcloudapi.com', reqTimeout: 12 } },
+  });
+  return asrClient;
+}
+
+async function handleRecognize(event, body) {
+  if (!(await checkRecognitionRate(event))) {
+    return response(event, 429, { ok: false, error: '识别请求较多，请稍等一分钟再试。' });
+  }
+  const sceneId = cleanText(body.sceneId, 30);
+  const audio = body.audio || {};
+  const type = cleanText(audio.type, 80);
+  const format = voiceFormatFor(type);
+  const data = typeof audio.data === 'string' ? audio.data : '';
+  if (!SCENES.has(sceneId) || !format || !data || data.length > Math.ceil(MAX_RECOGNITION_BYTES * 4 / 3) + 8) {
+    return response(event, 400, { ok: false, error: '这段录音无法识别，请重新录制。' });
+  }
+  const buffer = Buffer.from(data, 'base64');
+  if (!buffer.length || buffer.length > MAX_RECOGNITION_BYTES) {
+    return response(event, 400, { ok: false, error: '录音过长，请缩短回答后重新录制。' });
+  }
+  try {
+    const result = await getAsrClient().SentenceRecognition({
+      EngSerViceType: '16k_en',
+      SourceType: 1,
+      VoiceFormat: format,
+      Data: data,
+      DataLen: buffer.length,
+      WordInfo: 0,
+      FilterDirty: 0,
+      FilterModal: 0,
+      FilterPunc: 0,
+      ConvertNumMode: 1,
+      HotwordList: (SCENE_HOTWORDS[sceneId] || []).map((word) => `${word}|6`).join(','),
+    });
+    const transcript = cleanText(result.Result, 1000);
+    return response(event, 200, {
+      ok: true,
+      transcript,
+      durationMs: cleanInt(result.AudioDuration, 0, 60000),
+    });
+  } catch (error) {
+    const details = `${error?.code || ''} ${error?.message || ''}`;
+    console.error('speakingLab recognize failed', details, error?.requestId || '');
+    if (/not.*activate|notactivated|service.*open|unauthorized/i.test(details)) {
+      return response(event, 503, {
+        ok: false,
+        code: cleanText(error?.code, 100),
+        error: '腾讯云语音识别尚未开通或没有调用权限。录音仍已保留，可以手动输入或继续下一问。',
+      });
+    }
+    return response(event, 502, {
+      ok: false,
+      code: cleanText(error?.code, 100),
+      error: '云端暂时没有识别成功，录音仍已保留，可以重录或继续下一问。',
+    });
+  }
+}
+
+async function handleRecognizeChunk(event, body) {
+  if (!(await checkRecognitionRate(event))) {
+    return response(event, 429, { ok: false, error: '识别请求较多，请稍等一分钟再试。' });
+  }
+  const uploadId = cleanText(body.uploadId, 80);
+  const sceneId = cleanText(body.sceneId, 30);
+  const type = cleanText(body.type, 80);
+  const data = typeof body.data === 'string' ? body.data : '';
+  const chunkIndex = cleanInt(body.chunkIndex, 0, 31);
+  const totalChunks = cleanInt(body.totalChunks, 1, 32);
+  if (
+    !/^[a-z0-9-]{20,80}$/i.test(uploadId) ||
+    !SCENES.has(sceneId) ||
+    !voiceFormatFor(type) ||
+    chunkIndex >= totalChunks ||
+    !data ||
+    data.length > 65000
+  ) {
+    return response(event, 400, { ok: false, error: '录音分片无效，请重新录制。' });
+  }
+  const decoded = Buffer.from(data, 'base64');
+  if (!decoded.length || decoded.length > 50000) {
+    return response(event, 400, { ok: false, error: '录音分片过大，请重新录制。' });
+  }
+  const ipHash = sha256(clientIp(event));
+  const chunkId = `asr-${uploadId}-${chunkIndex}`;
+  await db.collection(RECOGNITION_CHUNKS).doc(chunkId).set({
+    upload_id: uploadId,
+    scene_id: sceneId,
+    type,
+    chunk_index: chunkIndex,
+    total_chunks: totalChunks,
+    data,
+    ip_hash: ipHash,
+    created_at: Date.now(),
+  });
+  if (chunkIndex + 1 < totalChunks) {
+    return response(event, 200, { ok: true, pending: true, received: chunkIndex + 1 });
+  }
+
+  const chunkIds = Array.from({ length: totalChunks }, (_, index) => `asr-${uploadId}-${index}`);
+  try {
+    const rows = await Promise.all(chunkIds.map((id) => getDocument(RECOGNITION_CHUNKS, id)));
+    if (rows.some((row, index) =>
+      !row || row.ip_hash !== ipHash || row.upload_id !== uploadId || row.scene_id !== sceneId ||
+      row.type !== type || Number(row.chunk_index) !== index || Number(row.total_chunks) !== totalChunks
+    )) {
+      return response(event, 400, { ok: false, error: '录音分片不完整，请重新录制。' });
+    }
+    const audioBuffer = Buffer.concat(rows.map((row) => Buffer.from(row.data, 'base64')));
+    if (!audioBuffer.length || audioBuffer.length > MAX_RECOGNITION_BYTES) {
+      return response(event, 400, { ok: false, error: '回答时间过长，请缩短后重新录制。' });
+    }
+    return await handleRecognize(event, {
+      sceneId,
+      audio: { type, data: audioBuffer.toString('base64') },
+    });
+  } finally {
+    await Promise.all(chunkIds.map((id) => db.collection(RECOGNITION_CHUNKS).doc(id).remove().catch(() => undefined)));
+  }
 }
 
 async function handleLogin(event, body) {
@@ -285,6 +448,8 @@ exports.main = async (event) => {
     await ensureCollections();
     const body = parseBody(event);
     const action = cleanText(body.action, 40);
+    if (action === 'recognizeChunk') return handleRecognizeChunk(event, body);
+    if (action === 'recognize') return handleRecognize(event, body);
     if (action === 'submit') return handleSubmit(event, body);
     if (action === 'teacherLogin') return handleLogin(event, body);
     if (action === 'session') {
