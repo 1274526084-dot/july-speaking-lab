@@ -221,50 +221,57 @@ export function SpeakingLab({ apiMode = 'form', apiUrl = '/api/attempts', assetB
         setNotice('正在录音。此浏览器不能自动识别文字，结束后请手动输入你说的内容。');
         return;
       }
-      const recognition = new Recognition();
-      recognition.lang = 'en-US';
-      recognition.interimResults = true;
-      recognition.continuous = false;
-      recognition.maxAlternatives = 5;
-      recognition.onresult = (event) => {
-        let finalText = finalTranscriptRef.current;
-        let interimText = '';
-        let confidence = 0;
-        for (let index = event.resultIndex; index < event.results.length; index += 1) {
-          const alternative = bestRecognitionAlternative(event.results[index], currentTurn);
-          if (!alternative) continue;
-          const transcript = alternative.transcript.trim();
-          if (event.results[index].isFinal) finalText = `${finalText} ${transcript}`.trim();
-          else interimText = `${interimText} ${transcript}`.trim();
-          confidence = Math.max(confidence, Number(alternative.confidence || 0));
-        }
-        finalTranscriptRef.current = finalText;
-        const nextDraft = `${finalText} ${interimText}`.trim();
-        draftRef.current = nextDraft;
-        setDraft(nextDraft);
-        if (confidence > 0) confidenceRef.current = confidence;
-      };
-      recognition.onerror = (event: RecognitionErrorEvent) => {
-        if (event.error === 'not-allowed') {
-          recognitionShouldRunRef.current = false;
-          setNotice('语音转文字权限未开启，但录音仍在继续。结束后可以手动输入回答。');
-        }
-        else if (event.error !== 'no-speech') setNotice('录音仍在继续。文字没有完全识别，结束后可以手动修改。');
-      };
-      recognition.onend = () => {
-        if (!recognitionShouldRunRef.current || recorderRef.current?.state !== 'recording') return;
-        window.setTimeout(() => {
-          if (!recognitionShouldRunRef.current || recorderRef.current?.state !== 'recording') return;
-          try {
-            recognition.start();
-            setNotice('录音仍在继续……请说完整后，再手动点击“结束回答”。');
-          } catch {
-            setNotice('录音仍在继续。说完后请手动结束；识别不到也可以继续下一问。');
+      try {
+        const recognition = new Recognition();
+        recognition.lang = 'en-US';
+        recognition.interimResults = true;
+        recognition.continuous = false;
+        recognition.maxAlternatives = 5;
+        recognition.onresult = (event) => {
+          let finalText = finalTranscriptRef.current;
+          let interimText = '';
+          let confidence = 0;
+          for (let index = event.resultIndex; index < event.results.length; index += 1) {
+            const alternative = bestRecognitionAlternative(event.results[index], currentTurn);
+            if (!alternative) continue;
+            const transcript = alternative.transcript.trim();
+            if (event.results[index].isFinal) finalText = `${finalText} ${transcript}`.trim();
+            else interimText = `${interimText} ${transcript}`.trim();
+            confidence = Math.max(confidence, Number(alternative.confidence || 0));
           }
-        }, 160);
-      };
-      recognitionRef.current = recognition;
-      recognition.start();
+          finalTranscriptRef.current = finalText;
+          const nextDraft = `${finalText} ${interimText}`.trim();
+          draftRef.current = nextDraft;
+          setDraft(nextDraft);
+          if (confidence > 0) confidenceRef.current = confidence;
+        };
+        recognition.onerror = (event: RecognitionErrorEvent) => {
+          if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+            recognitionShouldRunRef.current = false;
+            setNotice('语音转文字在当前手机中不可用，但录音仍在继续，识别不到也可以进入下一问。');
+          }
+          else if (event.error !== 'no-speech') setNotice('录音仍在继续。文字没有完全识别，结束后可以修改或直接进入下一问。');
+        };
+        recognition.onend = () => {
+          if (!recognitionShouldRunRef.current || recorderRef.current?.state !== 'recording') return;
+          window.setTimeout(() => {
+            if (!recognitionShouldRunRef.current || recorderRef.current?.state !== 'recording') return;
+            try {
+              recognition.start();
+              setNotice('录音仍在继续……请说完整后，再手动点击“结束回答”。');
+            } catch {
+              recognitionShouldRunRef.current = false;
+              setNotice('录音仍在继续。说完后请手动结束；识别不到也可以继续下一问。');
+            }
+          }, 160);
+        };
+        recognitionRef.current = recognition;
+        recognition.start();
+      } catch {
+        recognitionShouldRunRef.current = false;
+        recognitionRef.current = null;
+        setNotice('录音已经开始。当前手机不能启动文字识别，但录音和后续对话不受影响。');
+      }
     } catch {
       releaseStream();
       setIsRecording(false);
