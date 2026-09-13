@@ -8,11 +8,12 @@ import { scenes, type PracticeTurn, type SceneId } from '@/lib/scenes';
 
 type Profile = { name: string; studentId: string; className: string };
 type Stage = 'shadow' | 'choose' | 'practice' | 'result';
-type Message = { role: 'student' | 'partner'; text: string; adaptive?: boolean };
+type Message = { role: 'student' | 'partner'; text: string; adaptive?: boolean; fallback?: boolean };
 type AudioClip = { round: number; blob: Blob };
 type RoundScore = { task: number; sentence: number; clarity: number; note: string };
 type Submission = { ok: boolean; id?: string; error?: string };
-type RecognitionResult = { isFinal?: boolean; 0: { transcript: string; confidence?: number } };
+type RecognitionAlternative = { transcript: string; confidence?: number };
+type RecognitionResult = ArrayLike<RecognitionAlternative> & { isFinal?: boolean };
 type RecognitionEvent = { resultIndex: number; results: ArrayLike<RecognitionResult> };
 type RecognitionErrorEvent = { error?: string };
 type RecognitionInstance = {
@@ -50,6 +51,33 @@ function evaluateTurn(text: string, turn: PracticeTurn, confidence: number | nul
   if (words < 6) notes.push('补充一个具体细节');
   if (clarity < 14) notes.push('放慢语速并按意群停顿');
   return { task, sentence, clarity, note: notes[0] ?? '本轮表达完整，可以尝试减少支架。' };
+}
+
+function evaluateUnrecognizedTurn(): RoundScore {
+  return {
+    task: 20,
+    sentence: 15,
+    clarity: 8,
+    note: '手机没有返回识别文字，但本轮录音已保存，老师可以回听。',
+  };
+}
+
+function bestRecognitionAlternative(result: RecognitionResult, turn: PracticeTurn) {
+  const cueWords = normalize([...turn.keywords, ...turn.patterns, turn.example].join(' ')).split(' ').filter(Boolean);
+  let best: RecognitionAlternative | null = null;
+  let bestScore = -1;
+  for (let index = 0; index < result.length; index += 1) {
+    const alternative = result[index];
+    if (!alternative?.transcript?.trim()) continue;
+    const candidate = normalize(alternative.transcript);
+    const cueMatches = cueWords.filter((word) => candidate.includes(word)).length;
+    const score = cueMatches * 0.18 + Number(alternative.confidence || 0) + Math.min(0.2, candidate.split(' ').length * 0.025);
+    if (score > bestScore) {
+      best = alternative;
+      bestScore = score;
+    }
+  }
+  return best;
 }
 
 function speak(text: string) {
@@ -95,6 +123,7 @@ export function SpeakingLab({ apiMode = 'form', apiUrl = '/api/attempts', assetB
   const chunksRef = useRef<Blob[]>([]);
   const confidenceRef = useRef<number | null>(null);
   const finalTranscriptRef = useRef('');
+  const draftRef = useRef('');
   const recognitionShouldRunRef = useRef(false);
   const stoppingRef = useRef<Promise<Blob | null> | null>(null);
 
@@ -135,22 +164,30 @@ export function SpeakingLab({ apiMode = 'form', apiUrl = '/api/attempts', assetB
     if (stoppingRef.current) return stoppingRef.current;
     const recorder = recorderRef.current;
     if (!recorder) return null;
-    recognitionShouldRunRef.current = false;
-    try { recognitionRef.current?.stop(); } catch { /* recognition may already be between sessions */ }
-    recognitionRef.current = null;
-    const promise = new Promise<Blob | null>((resolve) => {
-      recorder.onstop = () => {
-        const type = recorder.mimeType || chunksRef.current[0]?.type || 'audio/webm';
-        const blob = chunksRef.current.length ? new Blob(chunksRef.current, { type }) : null;
-        releaseStream();
-        setIsRecording(false);
-        setPendingClip(blob);
-        setNotice(blob ? '录音已完成。检查文字后，发送本轮回答。' : '没有录到声音，请重新录制。');
-        resolve(blob);
-      };
-      if (recorder.state === 'inactive') recorder.onstop(new Event('stop'));
-      else recorder.stop();
-    });
+    const promise = (async () => {
+      recognitionShouldRunRef.current = false;
+      setNotice('正在完成本轮录音和文字识别……');
+      try { recognitionRef.current?.stop(); } catch { /* recognition may already be between sessions */ }
+      await new Promise((resolve) => window.setTimeout(resolve, 360));
+      recognitionRef.current = null;
+      return new Promise<Blob | null>((resolve) => {
+        recorder.onstop = () => {
+          const type = recorder.mimeType || chunksRef.current[0]?.type || 'audio/webm';
+          const blob = chunksRef.current.length ? new Blob(chunksRef.current, { type }) : null;
+          releaseStream();
+          setIsRecording(false);
+          setPendingClip(blob);
+          setNotice(!blob
+            ? '没有录到声音，请重新录制。'
+            : draftRef.current.trim()
+              ? '录音和文字已就绪。检查后进入下一问。'
+              : '录音已保存，但手机没有返回文字。可以手动输入，也可以直接进入下一问。');
+          resolve(blob);
+        };
+        if (recorder.state === 'inactive') recorder.onstop(new Event('stop'));
+        else recorder.stop();
+      });
+    })();
     stoppingRef.current = promise;
     const blob = await promise;
     stoppingRef.current = null;
@@ -161,6 +198,7 @@ export function SpeakingLab({ apiMode = 'form', apiUrl = '/api/attempts', assetB
     if (isRecording) return;
     setPendingClip(null);
     setDraft('');
+    draftRef.current = '';
     setNotice('正在录音……请说完整后，再手动点击“结束回答”。');
     confidenceRef.current = null;
     finalTranscriptRef.current = '';
@@ -186,20 +224,24 @@ export function SpeakingLab({ apiMode = 'form', apiUrl = '/api/attempts', assetB
       const recognition = new Recognition();
       recognition.lang = 'en-US';
       recognition.interimResults = true;
-      recognition.continuous = true;
-      recognition.maxAlternatives = 1;
+      recognition.continuous = false;
+      recognition.maxAlternatives = 5;
       recognition.onresult = (event) => {
         let finalText = finalTranscriptRef.current;
         let interimText = '';
         let confidence = 0;
         for (let index = event.resultIndex; index < event.results.length; index += 1) {
-          const transcript = event.results[index][0].transcript.trim();
+          const alternative = bestRecognitionAlternative(event.results[index], currentTurn);
+          if (!alternative) continue;
+          const transcript = alternative.transcript.trim();
           if (event.results[index].isFinal) finalText = `${finalText} ${transcript}`.trim();
           else interimText = `${interimText} ${transcript}`.trim();
-          confidence = Math.max(confidence, Number(event.results[index][0].confidence || 0));
+          confidence = Math.max(confidence, Number(alternative.confidence || 0));
         }
         finalTranscriptRef.current = finalText;
-        setDraft(`${finalText} ${interimText}`.trim());
+        const nextDraft = `${finalText} ${interimText}`.trim();
+        draftRef.current = nextDraft;
+        setDraft(nextDraft);
         if (confidence > 0) confidenceRef.current = confidence;
       };
       recognition.onerror = (event: RecognitionErrorEvent) => {
@@ -211,12 +253,15 @@ export function SpeakingLab({ apiMode = 'form', apiUrl = '/api/attempts', assetB
       };
       recognition.onend = () => {
         if (!recognitionShouldRunRef.current || recorderRef.current?.state !== 'recording') return;
-        try {
-          recognition.start();
-          setNotice('录音仍在继续……请说完整后，再手动点击“结束回答”。');
-        } catch {
-          setNotice('录音仍在继续。说完后请手动结束；识别文字可以稍后修改。');
-        }
+        window.setTimeout(() => {
+          if (!recognitionShouldRunRef.current || recorderRef.current?.state !== 'recording') return;
+          try {
+            recognition.start();
+            setNotice('录音仍在继续……请说完整后，再手动点击“结束回答”。');
+          } catch {
+            setNotice('录音仍在继续。说完后请手动结束；识别不到也可以继续下一问。');
+          }
+        }, 160);
       };
       recognitionRef.current = recognition;
       recognition.start();
@@ -225,7 +270,7 @@ export function SpeakingLab({ apiMode = 'form', apiUrl = '/api/attempts', assetB
       setIsRecording(false);
       setNotice('无法使用麦克风。请在浏览器地址栏允许麦克风后重试。');
     }
-  }, [isRecording, releaseStream]);
+  }, [currentTurn, isRecording, releaseStream]);
 
   useEffect(() => () => {
     if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
@@ -249,15 +294,20 @@ export function SpeakingLab({ apiMode = 'form', apiUrl = '/api/attempts', assetB
   }, []);
 
   const sendAnswer = useCallback(() => {
-    const text = draft.trim();
-    if (!text || !pendingClip) return;
-    const score = evaluateTurn(text, currentTurn, confidenceRef.current);
-    const adaptiveReply = getAdaptiveReply(scene.id, turn, text);
+    if (!pendingClip) return;
+    const recognizedText = draft.trim();
+    const usedFallback = !recognizedText;
+    const replyInput = recognizedText || currentTurn.example;
+    const displayText = recognizedText || '本轮回答录音已保存（手机未返回识别文字）';
+    const score = usedFallback ? evaluateUnrecognizedTurn() : evaluateTurn(recognizedText, currentTurn, confidenceRef.current);
+    const adaptiveReply = getAdaptiveReply(scene.id, turn, replyInput);
     setScores((previous) => [...previous, score]);
     setRecordings((previous) => [...previous.filter((clip) => clip.round !== turn + 1), { round: turn + 1, blob: pendingClip }]);
-    setMessages((previous) => [...previous, { role: 'student', text }, { role: 'partner', text: adaptiveReply, adaptive: true }]);
+    setMessages((previous) => [...previous, { role: 'student', text: displayText, fallback: usedFallback }, { role: 'partner', text: adaptiveReply, adaptive: true }]);
     setDraft('');
+    draftRef.current = '';
     setPendingClip(null);
+    setNotice('');
     confidenceRef.current = null;
     speak(adaptiveReply);
     if (turn + 1 >= scene.turns.length) setStage('result');
@@ -371,8 +421,8 @@ export function SpeakingLab({ apiMode = 'form', apiUrl = '/api/attempts', assetB
           <section>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-bold text-[#416b36]">Step 3 · Question and Answer</p><h1 className="serif text-3xl font-bold text-[#d94f08]">{scene.number} · {scene.titleZh}</h1></div><button onClick={() => { releaseStream(); setStage('choose'); }} className="focus-ring inline-flex items-center gap-1 rounded-full border border-[#dac5b3] bg-white px-4 py-2 text-sm font-bold text-[#687168]"><ArrowLeft className="h-4 w-4" /> 换场景</button></div>
             <div className="grid gap-5 lg:grid-cols-[1.05fr_.95fr]">
-              <div className="rounded-[28px] border border-[#dfcabb] bg-white p-5 shadow-soft"><div className="flex items-center justify-between border-b border-[#eee0d4] pb-3"><div><p className="font-bold">系统搭档</p><p className="text-xs text-[#687168]">根据你的回答继续追问 · 共3轮</p></div><button onClick={() => speak(messages.filter((message) => message.role === 'partner').at(-1)?.text ?? scene.opening)} className="focus-ring inline-flex items-center gap-2 rounded-full bg-[#e7f1e4] px-3 py-2 text-sm font-bold text-[#416b36]"><Volume2 className="h-4 w-4" /> 再听一次</button></div><div className="mt-4 min-h-80 space-y-3">{messages.map((message, index) => <div key={`${message.role}-${index}`} className={`flex ${message.role === 'student' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[86%] rounded-2xl px-4 py-3 leading-7 ${message.role === 'student' ? 'bg-[#ea5a0b] text-white' : 'bg-[#e7f1e4] text-[#31542a]'}`}><p className="mb-0.5 text-xs font-black opacity-65">{message.role === 'student' ? 'YOU' : message.adaptive ? 'PARTNER · 根据你的回答' : 'PARTNER'}</p>{message.text}</div></div>)}</div></div>
-              <aside className="rounded-[28px] border border-[#cbdcc8] bg-[#f5faf2] p-5 shadow-soft"><p className="text-sm font-bold text-[#416b36]">ROUND {turn + 1} / {scene.turns.length}</p><h2 className="serif mt-1 text-2xl font-bold">{currentTurn.prompt}</h2><div className="mt-4 rounded-2xl bg-white p-4"><p className="text-xs font-black text-[#ea5a0b]">小提示 · 可直接模仿</p><p className="mt-2 text-xl font-semibold leading-8">{currentTurn.frame}</p><button onClick={() => speak(currentTurn.example)} className="focus-ring mt-3 inline-flex items-center gap-2 text-sm font-bold text-[#416b36]"><Play className="h-4 w-4" /> 例句：{currentTurn.example}</button></div><div className="mt-4 rounded-2xl border border-[#ddc8b6] bg-white p-3"><textarea rows={3} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="语音识别文字会出现在这里，也可以修改……" className="focus-ring w-full resize-none border-0 bg-transparent p-1 outline-none" /><p aria-live="polite" className="mt-1 min-h-5 text-xs text-[#7b746c]">{notice || '点击麦克风开始回答。系统不会自动提交，请说完后手动结束。'}</p>{pendingClipUrl && <div className="mt-3 rounded-xl bg-[#edf6f8] p-3"><p className="mb-2 text-sm font-bold text-[#23748d]">先听一遍自己的回答</p><audio controls preload="metadata" src={pendingClipUrl} className="w-full" /></div>}<div className="mt-3 flex flex-wrap items-center justify-between gap-3">{pendingClip ? <><button onClick={() => void startRecording()} className="focus-ring inline-flex items-center gap-2 rounded-xl border border-[#d8b89d] bg-white px-4 py-3 font-bold text-[#b94a10]"><RotateCcw className="h-4 w-4" /> 重新录音</button><button disabled={!draft.trim()} onClick={sendAnswer} className="focus-ring inline-flex items-center gap-2 rounded-xl bg-[#416b36] px-4 py-3 font-bold text-white disabled:opacity-35"><Send className="h-4 w-4" /> 确认并进入下一问</button></> : <button onClick={isRecording ? () => void finishRecording() : () => void startRecording()} className={`focus-ring inline-flex items-center gap-2 rounded-xl px-4 py-3 font-bold text-white ${isRecording ? 'bg-[#b73523]' : 'bg-[#ea5a0b]'}`}>{isRecording ? <><Square className="h-4 w-4 fill-current" /> 结束回答</> : <><Mic className="h-5 w-5" /> 开始回答</>}</button>}</div></div>{pendingClip && <p className="mt-3 flex items-center gap-2 text-sm font-bold text-[#23748d]"><Check className="h-4 w-4" /> 满意后再确认；不满意可以重新录。</p>}</aside>
+              <div className="rounded-[28px] border border-[#dfcabb] bg-white p-5 shadow-soft"><div className="flex items-center justify-between border-b border-[#eee0d4] pb-3"><div><p className="font-bold">系统搭档</p><p className="text-xs text-[#687168]">根据你的回答继续追问 · 共3轮</p></div><button onClick={() => speak(messages.filter((message) => message.role === 'partner').at(-1)?.text ?? scene.opening)} className="focus-ring inline-flex items-center gap-2 rounded-full bg-[#e7f1e4] px-3 py-2 text-sm font-bold text-[#416b36]"><Volume2 className="h-4 w-4" /> 再听一次</button></div><div className="mt-4 min-h-80 space-y-3">{messages.map((message, index) => <div key={`${message.role}-${index}`} className={`flex ${message.role === 'student' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[86%] rounded-2xl px-4 py-3 leading-7 ${message.role === 'student' ? 'bg-[#ea5a0b] text-white' : 'bg-[#e7f1e4] text-[#31542a]'}`}><p className="mb-0.5 text-xs font-black opacity-65">{message.role === 'student' ? message.fallback ? 'YOU · 已录音，未转写' : 'YOU' : message.adaptive ? 'PARTNER · 根据你的回答' : 'PARTNER'}</p>{message.text}</div></div>)}</div></div>
+              <aside className="rounded-[28px] border border-[#cbdcc8] bg-[#f5faf2] p-5 shadow-soft"><p className="text-sm font-bold text-[#416b36]">ROUND {turn + 1} / {scene.turns.length}</p><h2 className="serif mt-1 text-2xl font-bold">{currentTurn.prompt}</h2><div className="mt-4 rounded-2xl bg-white p-4"><p className="text-xs font-black text-[#ea5a0b]">小提示 · 可直接模仿</p><p className="mt-2 text-xl font-semibold leading-8">{currentTurn.frame}</p><button onClick={() => speak(currentTurn.example)} className="focus-ring mt-3 inline-flex items-center gap-2 text-sm font-bold text-[#416b36]"><Play className="h-4 w-4" /> 例句：{currentTurn.example}</button></div><div className="mt-4 rounded-2xl border border-[#ddc8b6] bg-white p-3"><textarea rows={3} value={draft} onChange={(event) => { draftRef.current = event.target.value; setDraft(event.target.value); }} placeholder="识别文字会出现在这里；手机没有识别到时，也可以手动输入……" className="focus-ring w-full resize-none border-0 bg-transparent p-1 outline-none" /><p aria-live="polite" className="mt-1 min-h-5 text-xs text-[#7b746c]">{notice || '点击麦克风开始回答。系统不会自动提交，请说完后手动结束。'}</p>{pendingClipUrl && <div className="mt-3 rounded-xl bg-[#edf6f8] p-3"><p className="mb-2 text-sm font-bold text-[#23748d]">先听一遍自己的回答</p><audio controls preload="metadata" src={pendingClipUrl} className="w-full" /></div>}{pendingClip && !draft.trim() && <p className="mt-3 rounded-xl bg-[#fff4df] px-3 py-2.5 text-sm font-bold leading-6 text-[#9a4b0c]">手机没有返回文字也没关系：录音已经保留。可直接进入下一问，系统会用本轮例句维持对话，老师仍能回听你的真实录音。</p>}<div className="mt-3 flex flex-wrap items-center justify-between gap-3">{pendingClip ? <><button onClick={() => void startRecording()} className="focus-ring inline-flex items-center gap-2 rounded-xl border border-[#d8b89d] bg-white px-4 py-3 font-bold text-[#b94a10]"><RotateCcw className="h-4 w-4" /> 重新录音</button><button onClick={sendAnswer} className="focus-ring inline-flex items-center gap-2 rounded-xl bg-[#416b36] px-4 py-3 font-bold text-white"><Send className="h-4 w-4" /> {draft.trim() ? '确认并进入下一问' : '识别不到也继续下一问'}</button></> : <button onClick={isRecording ? () => void finishRecording() : () => void startRecording()} className={`focus-ring inline-flex items-center gap-2 rounded-xl px-4 py-3 font-bold text-white ${isRecording ? 'bg-[#b73523]' : 'bg-[#ea5a0b]'}`}>{isRecording ? <><Square className="h-4 w-4 fill-current" /> 结束回答</> : <><Mic className="h-5 w-5" /> 开始回答</>}</button>}</div></div>{pendingClip && <p className="mt-3 flex items-center gap-2 text-sm font-bold text-[#23748d]"><Check className="h-4 w-4" /> 满意后再确认；不满意可以重新录。</p>}</aside>
             </div>
           </section>
         )}
