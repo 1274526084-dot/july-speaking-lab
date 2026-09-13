@@ -215,7 +215,19 @@ function cleanWords(words) {
     audio_type: cleanText(word?.audio_type, 80),
     audio_source: cleanText(word?.audio_source, 100),
     source_url: cleanText(word?.source_url, 500),
+    audio_file_ids: Array.isArray(word?.audio_file_ids)
+      ? [...new Set(word.audio_file_ids.map((value) => cleanText(value, 500)).filter(Boolean))].slice(0, 12)
+      : [],
   })).filter((word) => word.word);
+}
+
+function audioIdsForWord(word) {
+  return [...new Set([word?.audio_file_id, ...(Array.isArray(word?.audio_file_ids) ? word.audio_file_ids : [])].filter(Boolean))];
+}
+
+function hydrateWordAudio(word, audioUrls) {
+  const audioUrlsForWord = audioIdsForWord(word).map((fileId) => audioUrls.get(fileId) || '').filter(Boolean);
+  return { ...word, audioUrl: audioUrlsForWord[0] || '', audioUrls: audioUrlsForWord };
 }
 
 function parseJson(value, fallback) {
@@ -223,10 +235,13 @@ function parseJson(value, fallback) {
 }
 
 function publicUnit(unit, audioUrls = new Map()) {
-  const words = cleanWords(parseJson(unit.words_json || '[]', [])).map((word) => ({
-    id: word.id, word: word.word, meaning: word.meaning, phonetic: word.phonetic,
-    example: word.example, audioUrl: audioUrls.get(word.audio_file_id) || '',
-  }));
+  const words = cleanWords(parseJson(unit.words_json || '[]', [])).map((word) => {
+    const hydrated = hydrateWordAudio(word, audioUrls);
+    return {
+      id: word.id, word: word.word, meaning: word.meaning, phonetic: word.phonetic,
+      example: word.example, audioUrl: hydrated.audioUrl, audioUrls: hydrated.audioUrls,
+    };
+  });
   return {
     id: unit.id, title: unit.title, note: unit.note || '', shareCode: unit.share_code,
     teacherName: unit.teacher_name, wordCount: words.length, publishedAt: unit.published_at || null, words,
@@ -293,6 +308,26 @@ async function lookupDictionaryWord(term) {
   };
 }
 
+async function lookupDictionaryTerm(term) {
+  if (!term.includes(' ')) {
+    const single = await lookupDictionaryWord(term);
+    return { ...single, word: term, segments: [single] };
+  }
+  const tokens = term.split(/\s+/).map((token) => token.replace(/^[^a-z']+|[^a-z']+$/g, '')).filter(Boolean).slice(0, 12);
+  if (tokens.length < 2) throw new Error('词组格式无法识别');
+  const segments = await Promise.all(tokens.map((token) => lookupDictionaryWord(token)));
+  return {
+    word: term,
+    meaning: '',
+    phonetic: segments.map((segment) => segment.phonetic).filter(Boolean).join(' '),
+    example: '',
+    audioUrl: segments.map((segment) => segment.audioUrl).join('|'),
+    audioType: segments[0].audioType,
+    segments,
+    sourceUrl: `https://dict.youdao.com/jsonapi?q=${encodeURIComponent(term)}`,
+  };
+}
+
 async function handleLogin(event, body) {
   if (!(await rateLimit(event, 'word-login', 12))) return response(event, 429, { ok: false, error: '尝试次数过多，请15分钟后再试。' });
   const mode = cleanText(body.mode, 12);
@@ -315,9 +350,9 @@ async function handleTeacherListUnits(event, body) {
   if (!teacherId) return response(event, 400, { ok: false, error: '请选择教师。' });
   const result = await queryRows(UNITS, { teacher_id: teacherId }, 200);
   const parsedWords = result.map((unit) => cleanWords(parseJson(unit.words_json || '[]', [])));
-  const urls = await temporaryUrlMap(parsedWords.flatMap((words) => words.map((word) => word.audio_file_id)));
+  const urls = await temporaryUrlMap(parsedWords.flatMap((words) => words.flatMap(audioIdsForWord)));
   const rows = result.map((unit, index) => {
-    const words = parsedWords[index].map((word) => ({ ...word, audioUrl: urls.get(word.audio_file_id) || '' }));
+    const words = parsedWords[index].map((word) => hydrateWordAudio(word, urls));
     return { ...unit, words, words_json: undefined, demoCount: words.filter((word) => word.audio_file_id).length };
   });
   rows.sort((left, right) => Number(right.updated_at || 0) - Number(left.updated_at || 0));
@@ -347,8 +382,8 @@ async function handleTeacherGetSharedUnit(event, body) {
   const unit = await getDocument(UNITS, cleanText(body.unitId, 80));
   if (!unit || unit.status !== 'published') return response(event, 404, { ok: false, error: '共享任务不存在或尚未发布。' });
   const words = cleanWords(parseJson(unit.words_json || '[]', []));
-  const urls = await temporaryUrlMap(words.map((word) => word.audio_file_id));
-  const hydratedWords = words.map((word) => ({ ...word, audioUrl: urls.get(word.audio_file_id) || '' }));
+  const urls = await temporaryUrlMap(words.flatMap(audioIdsForWord));
+  const hydratedWords = words.map((word) => hydrateWordAudio(word, urls));
   return response(event, 200, { ok: true, unit: { ...unit, words: hydratedWords, words_json: undefined, demoCount: words.filter((word) => word.audio_file_id).length } });
 }
 
@@ -359,23 +394,27 @@ async function handleTeacherCloneUnit(event, body) {
   if (!source || source.status !== 'published') return response(event, 404, { ok: false, error: '共享任务不存在或尚未发布。' });
   if (source.teacher_id === session.teacher_id) return response(event, 400, { ok: false, error: '这是您自己的任务，无需重复应用。' });
   const sourceWords = cleanWords(parseJson(source.words_json || '[]', []));
-  if (!sourceWords.length || sourceWords.some((word) => !word.audio_file_id)) return response(event, 400, { ok: false, error: '原任务的发音资料不完整，暂时无法应用。' });
-  const sourceUrls = await temporaryUrlMap(sourceWords.map((word) => word.audio_file_id));
+  if (!sourceWords.length || sourceWords.some((word) => !audioIdsForWord(word).length)) return response(event, 400, { ok: false, error: '原任务的发音资料不完整，暂时无法应用。' });
+  const sourceUrls = await temporaryUrlMap(sourceWords.flatMap(audioIdsForWord));
   const id = randomUUID();
   const copiedFiles = [];
   try {
     const copiedWords = await Promise.all(sourceWords.map(async (word) => {
-      const sourceUrl = sourceUrls.get(word.audio_file_id);
-      if (!sourceUrl) throw new Error(`无法读取 ${word.word} 的发音`);
-      const audioResponse = await fetchWithTimeout(sourceUrl, { headers: { Accept: 'audio/*' } }, 10000);
-      if (!audioResponse.ok) throw new Error(`无法复制 ${word.word} 的发音`);
-      const buffer = Buffer.from(await audioResponse.arrayBuffer());
-      if (!buffer.length || buffer.length > MAX_AUDIO_BYTES) throw new Error(`${word.word} 的发音文件无效`);
-      const cloudPath = `july-word-lab/shared-copy/${session.teacher_id}/${id}/${randomUUID()}.${extensionFor(word.audio_type || audioResponse.headers.get('content-type'))}`;
-      const upload = await app.uploadFile({ cloudPath, fileContent: buffer });
-      if (!upload.fileID) throw new Error(`无法保存 ${word.word} 的发音`);
-      copiedFiles.push(upload.fileID);
-      return { ...word, id: randomUUID(), audio_file_id: upload.fileID };
+      const wordFiles = [];
+      for (const sourceFileId of audioIdsForWord(word)) {
+        const sourceUrl = sourceUrls.get(sourceFileId);
+        if (!sourceUrl) throw new Error(`无法读取 ${word.word} 的发音`);
+        const audioResponse = await fetchWithTimeout(sourceUrl, { headers: { Accept: 'audio/*' } }, 10000);
+        if (!audioResponse.ok) throw new Error(`无法复制 ${word.word} 的发音`);
+        const buffer = Buffer.from(await audioResponse.arrayBuffer());
+        if (!buffer.length || buffer.length > MAX_AUDIO_BYTES) throw new Error(`${word.word} 的发音文件无效`);
+        const cloudPath = `july-word-lab/shared-copy/${session.teacher_id}/${id}/${randomUUID()}.${extensionFor(word.audio_type || audioResponse.headers.get('content-type'))}`;
+        const upload = await app.uploadFile({ cloudPath, fileContent: buffer });
+        if (!upload.fileID) throw new Error(`无法保存 ${word.word} 的发音`);
+        copiedFiles.push(upload.fileID);
+        wordFiles.push(upload.fileID);
+      }
+      return { ...word, id: randomUUID(), audio_file_id: wordFiles[0], audio_file_ids: wordFiles };
     }));
     let shareCode = '';
     for (let tries = 0; tries < 8 && !shareCode; tries += 1) {
@@ -391,8 +430,8 @@ async function handleTeacherCloneUnit(event, body) {
       copied_from_unit_id: source.id, copied_from_teacher: source.teacher_name,
     };
     await db.collection(UNITS).doc(id).set(record);
-    const urls = await temporaryUrlMap(copiedWords.map((word) => word.audio_file_id));
-    const words = copiedWords.map((word) => ({ ...word, audioUrl: urls.get(word.audio_file_id) || '' }));
+    const urls = await temporaryUrlMap(copiedWords.flatMap(audioIdsForWord));
+    const words = copiedWords.map((word) => hydrateWordAudio(word, urls));
     return response(event, 200, { ok: true, unit: { ...record, words, words_json: undefined, demoCount: words.length } });
   } catch (error) {
     if (copiedFiles.length) await app.deleteFile({ fileList: copiedFiles }).catch(() => undefined);
@@ -452,21 +491,27 @@ async function handleTeacherSmartImport(event, body) {
   const existingMap = new Map(existingWords.map((word) => [word.word.toLowerCase(), word]));
   const lookups = await Promise.all(entries.map(async ({ term, meaning: meaningOverride }) => {
     const saved = existingMap.get(term);
-    if (saved?.audio_file_id) return { ok: true, word: { ...saved, meaning: meaningOverride || saved.meaning }, reused: true };
+    if (audioIdsForWord(saved).length) return { ok: true, word: { ...saved, meaning: meaningOverride || saved.meaning }, reused: true };
+    const uploadedFileIds = [];
     try {
-      const found = await lookupDictionaryWord(term);
-      const cloudPath = `july-word-lab/dictionary/${session.teacher_id}/${id}/${sha256(`${term}-${found.audioUrl}`).slice(0, 20)}.${extensionFor(found.audioType)}`;
-      const upload = await app.uploadFile({ cloudPath, fileContent: found.buffer });
-      if (!upload.fileID) throw new Error('保存发音失败');
+      const found = await lookupDictionaryTerm(term);
+      for (let segmentIndex = 0; segmentIndex < found.segments.length; segmentIndex += 1) {
+        const segment = found.segments[segmentIndex];
+        const cloudPath = `july-word-lab/dictionary/${session.teacher_id}/${id}/${sha256(`${term}-${segment.audioUrl}-${segmentIndex}`).slice(0, 20)}.${extensionFor(segment.audioType)}`;
+        const upload = await app.uploadFile({ cloudPath, fileContent: segment.buffer });
+        if (!upload.fileID) throw new Error('保存发音失败');
+        uploadedFileIds.push(upload.fileID);
+      }
       return {
         ok: true,
         word: {
           id: saved?.id || randomUUID(), word: found.word || term, meaning: meaningOverride || found.meaning,
-          phonetic: found.phonetic, example: found.example, audio_file_id: upload.fileID,
-          audio_type: found.audioType, audio_source: 'Youdao Dictionary', source_url: found.sourceUrl,
+          phonetic: found.phonetic, example: found.example, audio_file_id: uploadedFileIds[0], audio_file_ids: uploadedFileIds,
+          audio_type: found.audioType, audio_source: found.segments.length > 1 ? 'Youdao Dictionary word sequence' : 'Youdao Dictionary', source_url: found.sourceUrl,
         },
       };
     } catch (error) {
+      if (uploadedFileIds.length) await app.deleteFile({ fileList: uploadedFileIds }).catch(() => undefined);
       return { ok: false, term, error: cleanText(error?.message || '自动获取失败', 100), word: saved || { id: randomUUID(), word: term, meaning: '', phonetic: '', example: '', audio_file_id: '', audio_type: '', audio_source: '', source_url: '' } };
     }
   }));
@@ -486,12 +531,12 @@ async function handleTeacherSmartImport(event, body) {
     created_at: existing?.created_at || now, updated_at: now, published_at: existing?.published_at || null,
   };
   await db.collection(UNITS).doc(id).set(record);
-  const keptIds = new Set(words.map((word) => word.audio_file_id).filter(Boolean));
-  const removedFiles = existingWords.map((word) => word.audio_file_id).filter((fileId) => fileId && !keptIds.has(fileId));
+  const keptIds = new Set(words.flatMap(audioIdsForWord));
+  const removedFiles = existingWords.flatMap(audioIdsForWord).filter((fileId) => fileId && !keptIds.has(fileId));
   if (removedFiles.length) await app.deleteFile({ fileList: removedFiles }).catch(() => undefined);
   const failures = lookups.filter((item) => !item.ok).map((item) => ({ word: item.term, reason: item.error }));
-  const urls = await temporaryUrlMap(words.map((word) => word.audio_file_id));
-  const hydratedWords = words.map((word) => ({ ...word, audioUrl: urls.get(word.audio_file_id) || '' }));
+  const urls = await temporaryUrlMap(words.flatMap(audioIdsForWord));
+  const hydratedWords = words.map((word) => hydrateWordAudio(word, urls));
   return response(event, 200, { ok: true, unit: { ...record, words: hydratedWords, words_json: undefined, demoCount: words.filter((word) => word.audio_file_id).length }, failures });
 }
 
@@ -505,14 +550,15 @@ async function handleTeacherUploadReference(event, body) {
   const words = cleanWords(parseJson(unit.words_json || '[]', []));
   const wordIndex = words.findIndex((word) => word.id === cleanText(body.wordId, 64));
   if (wordIndex < 0) return response(event, 404, { ok: false, error: '没有找到这个单词。' });
-  const oldFileId = words[wordIndex].audio_file_id;
+  const oldFileIds = audioIdsForWord(words[wordIndex]);
   const cloudPath = `july-word-lab/reference/${session.teacher_id}/${unit.id}/${words[wordIndex].id}-${Date.now()}.${extensionFor(audio.type)}`;
   const upload = await app.uploadFile({ cloudPath, fileContent: audio.buffer });
   if (!upload.fileID) return response(event, 500, { ok: false, error: '示范音频上传失败，请重试。' });
   words[wordIndex].audio_file_id = upload.fileID;
+  words[wordIndex].audio_file_ids = [upload.fileID];
   words[wordIndex].audio_type = audio.type;
   await db.collection(UNITS).doc(unit.id).update({ words_json: JSON.stringify(words), status: 'draft', updated_at: Date.now() });
-  if (oldFileId) await app.deleteFile({ fileList: [oldFileId] }).catch(() => undefined);
+  if (oldFileIds.length) await app.deleteFile({ fileList: oldFileIds }).catch(() => undefined);
   return response(event, 200, { ok: true, fileId: upload.fileID });
 }
 
@@ -522,7 +568,7 @@ async function handleTeacherPublish(event, body) {
   const unit = await getDocument(UNITS, cleanText(body.unitId, 64));
   if (!unit || unit.teacher_id !== session.teacher_id) return response(event, 404, { ok: false, error: '没有找到这个单元。' });
   const words = cleanWords(parseJson(unit.words_json || '[]', []));
-  const missing = words.filter((word) => !word.audio_file_id).map((word) => word.word);
+  const missing = words.filter((word) => !audioIdsForWord(word).length).map((word) => word.word);
   if (missing.length) return response(event, 400, { ok: false, error: `这些单词还没有自动获取到词典发音，请检查拼写后重新智能添加：${missing.slice(0, 8).join('、')}${missing.length > 8 ? '等' : ''}` });
   const publishedAt = Date.now();
   await db.collection(UNITS).doc(unit.id).update({ status: 'published', published_at: publishedAt, updated_at: publishedAt });
@@ -534,7 +580,7 @@ async function handleStudentGetUnit(event, body) {
   const unit = shareCode ? await findOne(UNITS, { share_code: shareCode, status: 'published' }) : null;
   if (!unit) return response(event, 404, { ok: false, error: '没有找到已发布的单元，请检查链接或单元代码。' });
   const words = cleanWords(parseJson(unit.words_json || '[]', []));
-  const urls = await temporaryUrlMap(words.map((word) => word.audio_file_id));
+  const urls = await temporaryUrlMap(words.flatMap(audioIdsForWord));
   return response(event, 200, { ok: true, unit: publicUnit(unit, urls) });
 }
 
@@ -569,15 +615,46 @@ function levenshtein(a, b) {
   return matrix[b.length][a.length];
 }
 
-function scoreRecognition(target, transcript, confidence) {
-  const normalize = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9']/g, '');
-  const expected = normalize(target);
-  const heard = normalize(transcript);
-  if (!expected || !heard) return 0;
+function scoreRecognition(target, transcript, confidence, acousticScore, speechDetected) {
+  const words = (value) => String(value || '').toLowerCase().match(/[a-z0-9']+/g) || [];
+  const expectedWords = words(target);
+  const heardWords = words(transcript);
+  const expected = expectedWords.join('');
+  const heard = heardWords.join('');
+  const acoustic = cleanInt(acousticScore, 0, 100, 0);
+  if (!expected) return { score: 0, mode: 'no-speech' };
+  if (!heard) {
+    if (speechDetected && acoustic >= 25) {
+      return { score: Math.max(35, Math.min(93, acoustic)), mode: 'acoustic-fallback' };
+    }
+    return { score: 0, mode: 'no-speech' };
+  }
   const similarity = Math.max(0, 1 - levenshtein(expected, heard) / Math.max(expected.length, heard.length, 1));
+  const matchingWords = expectedWords.filter((word, index) => heardWords[index] === word).length;
+  const coverage = matchingWords / Math.max(1, expectedWords.length);
   const exact = expected === heard || heard.includes(expected);
   const confidencePart = Math.max(0, Math.min(1, Number(confidence) || 0));
-  return Math.round(Math.min(100, exact ? 88 + confidencePart * 12 : similarity * 75 + confidencePart * 20));
+  const recognitionScore = Math.min(100, exact
+    ? 88 + confidencePart * 12
+    : similarity * 76 + coverage * 17 + confidencePart * 7);
+  const score = acoustic >= 25
+    ? recognitionScore * 0.84 + acoustic * 0.16
+    : recognitionScore;
+  return { score: Math.round(Math.max(0, Math.min(100, score))), mode: 'speech-recognition' };
+}
+
+function pronunciationAdvice(score, mode, referenceCompared) {
+  if (mode === 'no-speech') return '录音中没有检测到清晰人声，请靠近麦克风重新录制。';
+  if (mode === 'acoustic-fallback') {
+    if (score >= 82) return referenceCompared
+      ? '录音清晰，时长和示范节奏较接近；老师可回听确认具体发音。'
+      : '录音清晰、时长合适；当前浏览器未返回文字，老师可回听确认具体发音。';
+    if (score >= 65) return '已完成录音对比评分，建议再听示范，注意重音和完整音节。';
+    return '已检测到人声，建议靠近麦克风、放慢速度，并跟着示范完整读一遍。';
+  }
+  if (score >= 88) return '识别很清楚，可以继续保持自然重音。';
+  if (score >= 65) return '基本识别正确，建议再听一次示范并完整读出每个音节。';
+  return '与目标词差异较大，请先听示范，再分音节慢读。';
 }
 
 async function studentAttempt(body) {
@@ -639,12 +716,18 @@ async function handleStudentConfirmWord(event, body) {
   const transcript = cleanText(body.transcript, 120);
   const confidence = Math.max(0, Math.min(1, Number(body.confidence) || 0));
   const selfRating = cleanInt(body.selfRating, 1, 3, 2);
-  const score = scoreRecognition(word.word, transcript, confidence);
+  const acousticScore = cleanInt(body.acousticScore, 0, 100, 0);
+  const speechDetected = body.speechDetected === true;
+  const durationMs = cleanInt(body.durationMs, 0, 20_000, 0);
+  const referenceCompared = body.referenceCompared === true;
+  const scored = scoreRecognition(word.word, transcript, confidence, acousticScore, speechDetected);
+  const score = scored.score;
   const results = Array.isArray(parseJson(attempt.results_json || '[]', [])) ? parseJson(attempt.results_json || '[]', []) : [];
   const existing = results.find((item) => item.word_id === word.id);
   const next = {
     word_id: word.id, word: word.word, transcript, confidence: Math.round(confidence * 100),
     system_score: score, self_rating: selfRating, audio_file_id: fileId, audio_type: upload.audio_type,
+    scoring_mode: scored.mode, acoustic_score: acousticScore, duration_ms: durationMs, reference_compared: referenceCompared,
     recorded_at: Date.now(),
   };
   const nextResults = [...results.filter((item) => item.word_id !== word.id), next];
@@ -653,11 +736,8 @@ async function handleStudentConfirmWord(event, body) {
     pending_uploads_json: JSON.stringify(pending.filter((item) => item.file_id !== fileId && Number(item.expires_at || 0) > Date.now())),
   });
   if (existing?.audio_file_id && existing.audio_file_id !== fileId) await app.deleteFile({ fileList: [existing.audio_file_id] }).catch(() => undefined);
-  const advice = !transcript ? '系统没有识别到单词，请靠近麦克风、放慢速度后再试。'
-    : score >= 88 ? '识别很清楚，可以继续保持自然重音。'
-      : score >= 65 ? '基本识别正确，建议再听一次示范并完整读出每个音节。'
-        : '与目标词差异较大，请先听示范，再分音节慢读。';
-  return response(event, 200, { ok: true, score, advice, transcript });
+  const advice = pronunciationAdvice(score, scored.mode, referenceCompared);
+  return response(event, 200, { ok: true, score, advice, transcript, scoringMode: scored.mode });
 }
 
 async function handleStudentSubmitWord(event, body) {
@@ -672,7 +752,12 @@ async function handleStudentSubmitWord(event, body) {
   const transcript = cleanText(body.transcript, 120);
   const confidence = Math.max(0, Math.min(1, Number(body.confidence) || 0));
   const selfRating = cleanInt(body.selfRating, 1, 3, 2);
-  const score = scoreRecognition(word.word, transcript, confidence);
+  const acousticScore = cleanInt(body.acousticScore, 0, 100, 0);
+  const speechDetected = body.speechDetected === true;
+  const durationMs = cleanInt(body.durationMs, 0, 20_000, 0);
+  const referenceCompared = body.referenceCompared === true;
+  const scored = scoreRecognition(word.word, transcript, confidence, acousticScore, speechDetected);
+  const score = scored.score;
   const results = Array.isArray(parseJson(attempt.results_json || '[]', [])) ? parseJson(attempt.results_json || '[]', []) : [];
   const existing = results.find((item) => item.word_id === word.id);
   const oldFileId = existing?.audio_file_id || '';
@@ -682,16 +767,14 @@ async function handleStudentSubmitWord(event, body) {
   const next = {
     word_id: word.id, word: word.word, transcript, confidence: Math.round(confidence * 100),
     system_score: score, self_rating: selfRating, audio_file_id: upload.fileID, audio_type: audio.type,
+    scoring_mode: scored.mode, acoustic_score: acousticScore, duration_ms: durationMs, reference_compared: referenceCompared,
     recorded_at: Date.now(),
   };
   const nextResults = [...results.filter((item) => item.word_id !== word.id), next];
   await db.collection(ATTEMPTS).doc(attempt.id).update({ results_json: JSON.stringify(nextResults) });
   if (oldFileId) await app.deleteFile({ fileList: [oldFileId] }).catch(() => undefined);
-  const advice = !transcript ? '系统没有识别到单词，请靠近麦克风、放慢速度后再试。'
-    : score >= 88 ? '识别很清楚，可以继续保持自然重音。'
-      : score >= 65 ? '基本识别正确，建议再听一次示范并完整读出每个音节。'
-        : '与目标词差异较大，请先听示范，再分音节慢读。';
-  return response(event, 200, { ok: true, score, advice, transcript });
+  const advice = pronunciationAdvice(score, scored.mode, referenceCompared);
+  return response(event, 200, { ok: true, score, advice, transcript, scoringMode: scored.mode });
 }
 
 async function handleStudentComplete(event, body) {
@@ -777,7 +860,7 @@ async function handleAdminDeleteUnit(event, body) {
   if (!unit) return response(event, 404, { ok: false, error: '没有找到单元。' });
   const attempts = await queryRows(ATTEMPTS, { unit_id: unit.id }, 1);
   if (attempts.length) return response(event, 409, { ok: false, error: '已有学生数据的单元不能删除。' });
-  const files = cleanWords(parseJson(unit.words_json || '[]', [])).map((word) => word.audio_file_id).filter(Boolean);
+  const files = cleanWords(parseJson(unit.words_json || '[]', [])).flatMap(audioIdsForWord);
   await db.collection(UNITS).doc(unit.id).remove();
   if (files.length) await app.deleteFile({ fileList: files }).catch(() => undefined);
   return response(event, 200, { ok: true });

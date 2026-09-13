@@ -36,6 +36,7 @@ import {
   wordPath,
   wordRequest,
 } from './word-api';
+import { WordDemoAudio } from './word-demo-audio';
 
 type Teacher = {
   id: string;
@@ -456,7 +457,11 @@ function AttemptsTable({
                             <span>
                               {item.word}{' '}
                               <small className="ml-2 text-slate-500">
-                                识别：{item.transcript || '无'}
+                                {item.transcript
+                                  ? `识别：${item.transcript}`
+                                  : item.scoring_mode === 'acoustic-fallback'
+                                    ? '评分方式：录音对比'
+                                    : '识别：无'}
                               </small>
                             </span>
                             <span className="text-indigo-700">
@@ -556,7 +561,7 @@ function UnitEditor({
       <div className="mt-5 flex items-start gap-3 rounded-2xl bg-gradient-to-r from-indigo-50 to-cyan-50 p-4">
         <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" />
         <p className="text-sm leading-6 text-slate-700">
-          系统会自动查询词典中的标准发音、IPA音标、英文释义和例句，并把发音音频保存到腾讯云。无需教师录音。
+          系统会自动查询词典中的标准发音、IPA音标、英文释义和例句，并把发音音频保存到腾讯云。词组会按顺序组合每个单词的词典真人发音，不使用浏览器合成音，也无需教师录音。
         </p>
       </div>
       <div className="mt-6 grid gap-5">
@@ -779,15 +784,18 @@ function DictionaryWord({ word }: { word: WordItem }) {
           )}
         </div>
         <span className={`word-status ${word.audio_file_id ? 'is-live' : ''}`}>
-          {word.audio_file_id ? '词典发音' : '未找到发音'}
+          {word.audio_file_id
+            ? (word.audioUrls?.length || 0) > 1
+              ? '词组分段发音'
+              : '词典发音'
+            : '未找到发音'}
         </span>
       </div>
       {word.audioUrl && (
-        <audio
-          controls
-          preload="none"
-          src={word.audioUrl}
-          className="mt-3 h-9 w-full"
+        <WordDemoAudio
+          urls={word.audioUrls?.length ? word.audioUrls : [word.audioUrl]}
+          phrase={word.word}
+          compact
         />
       )}
     </div>

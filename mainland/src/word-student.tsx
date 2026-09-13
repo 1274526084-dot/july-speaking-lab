@@ -19,6 +19,8 @@ import {
   uploadWordAudio,
   wordRequest,
 } from './word-api';
+import { assessPronunciationRecording } from './word-audio-analysis';
+import { WordDemoAudio } from './word-demo-audio';
 
 type SpeechResultLike = {
   0: { transcript: string; confidence: number };
@@ -32,6 +34,7 @@ type RecognitionLike = {
   lang: string;
   interimResults: boolean;
   continuous: boolean;
+  maxAlternatives?: number;
   start: () => void;
   stop: () => void;
   onresult: ((event: SpeechEventLike) => void) | null;
@@ -89,6 +92,7 @@ export function WordStudent() {
   const [feedback, setFeedback] = useState<{
     score: number;
     advice: string;
+    scoringMode: 'speech-recognition' | 'acoustic-fallback' | 'no-speech';
   } | null>(null);
   const [completed, setCompleted] = useState<{
     averageScore: number;
@@ -216,8 +220,9 @@ export function WordStudent() {
       const recognition = getRecognition();
       if (recognition) {
         recognition.lang = 'en-US';
-        recognition.interimResults = false;
-        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.continuous = false;
+        recognition.maxAlternatives = 5;
         let bestConfidence = 0;
         const heard: string[] = [];
         recognition.onresult = (event) => {
@@ -227,8 +232,8 @@ export function WordStudent() {
             resultIndex += 1
           ) {
             const result = event.results[resultIndex];
-            if (result.isFinal && result[0]) {
-              heard.push(result[0].transcript);
+            if (result[0]) {
+              heard[resultIndex] = result[0].transcript;
               bestConfidence = Math.max(
                 bestConfidence,
                 result[0].confidence || 0,
@@ -274,6 +279,21 @@ export function WordStudent() {
     setSaving(true);
     setError('');
     try {
+      const currentWord = unit.words[index];
+      const referenceUrls = currentWord.audioUrls?.length
+        ? currentWord.audioUrls
+        : currentWord.audioUrl
+          ? [currentWord.audioUrl]
+          : [];
+      const assessment = await assessPronunciationRecording(
+        clip,
+        referenceUrls,
+        currentWord.word,
+      );
+      if (!assessment.speechDetected) {
+        setError('录音中没有检测到清晰人声，请靠近麦克风重新录制。');
+        return;
+      }
       const uploadClip = await prepareAudioForUpload(clip);
       const prepared = await wordRequest<{ upload: WordUploadTicket }>(
         'studentPrepareWordUpload',
@@ -286,7 +306,11 @@ export function WordStudent() {
         },
       );
       await uploadWordAudio(prepared.upload, uploadClip);
-      const payload = await wordRequest<{ score: number; advice: string }>(
+      const payload = await wordRequest<{
+        score: number;
+        advice: string;
+        scoringMode: 'speech-recognition' | 'acoustic-fallback' | 'no-speech';
+      }>(
         'studentConfirmWord',
         {
           attemptId,
@@ -296,9 +320,17 @@ export function WordStudent() {
           transcript,
           confidence,
           selfRating,
+          acousticScore: assessment.acousticScore,
+          speechDetected: assessment.speechDetected,
+          durationMs: assessment.durationMs,
+          referenceCompared: assessment.referenceCompared,
         },
       );
-      setFeedback({ score: payload.score, advice: payload.advice });
+      setFeedback({
+        score: payload.score,
+        advice: payload.advice,
+        scoringMode: payload.scoringMode,
+      });
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -595,11 +627,9 @@ export function WordStudent() {
             <section>
               <p className="word-step">STEP 1 · 听词典标准发音</p>
               {current.audioUrl ? (
-                <audio
-                  controls
-                  preload="metadata"
-                  src={current.audioUrl}
-                  className="mt-4 w-full"
+                <WordDemoAudio
+                  urls={current.audioUrls?.length ? current.audioUrls : [current.audioUrl]}
+                  phrase={current.word}
                 />
               ) : (
                 <p className="word-error mt-4">
@@ -656,7 +686,7 @@ export function WordStudent() {
                   <p className="mt-3 text-sm text-slate-500">
                     自动识别：
                     <strong className="text-slate-800">
-                      {transcript || '暂未识别到文字'}
+                      {transcript || '当前浏览器未返回文字，将使用录音对比评分'}
                     </strong>
                   </p>
                 </div>
@@ -709,7 +739,9 @@ export function WordStudent() {
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-black text-emerald-700">
-                    系统练习反馈
+                    {feedback.scoringMode === 'acoustic-fallback'
+                      ? '录音对比反馈'
+                      : '系统识别反馈'}
                   </p>
                   <div className="mt-1 flex items-baseline gap-3">
                     <strong className="text-4xl font-black text-emerald-700">
@@ -732,7 +764,9 @@ export function WordStudent() {
                 </button>
               </div>
               <p className="mt-4 text-xs leading-5 text-emerald-800/75">
-                该分数反映浏览器对目标单词的识别情况，可能受设备、网络和环境噪声影响；老师可回听录音进行判断。
+                {feedback.scoringMode === 'acoustic-fallback'
+                  ? '当前浏览器未返回识别文字，本次根据录音清晰度、有效时长及与示范发音的节奏相似度评分；老师仍可回听录音。'
+                  : '该分数反映浏览器对目标单词的识别情况，可能受设备、网络和环境噪声影响；老师可回听录音进行判断。'}
               </p>
             </div>
           )}

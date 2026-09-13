@@ -122,7 +122,9 @@ export type WordItem = {
   phonetic: string;
   example: string;
   audioUrl?: string;
+  audioUrls?: string[];
   audio_file_id?: string;
+  audio_file_ids?: string[];
   audio_type?: string;
   audio_source?: string;
   source_url?: string;
@@ -152,6 +154,10 @@ export type WordResult = {
   system_score: number;
   self_rating: number;
   audioUrl?: string;
+  scoring_mode?: 'speech-recognition' | 'acoustic-fallback' | 'no-speech';
+  acoustic_score?: number;
+  reference_compared?: boolean;
+  duration_ms?: number;
 };
 
 export type WordAttempt = {
