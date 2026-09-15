@@ -1,0 +1,1 @@
+System.register(["./chunks/jsx-runtime-legacy-20260915-upload1.js","./chunks/profile-main-legacy-20260915-upload1.js"],function(e,n){return{setters:[function(e){},function(e){}],execute:function(){}}});

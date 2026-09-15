@@ -7,6 +7,7 @@ import { defineConfig } from 'vite';
 
 const projectDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.join(projectDir, 'mainland');
+const releaseId = '20260915-upload1';
 
 export default defineConfig({
   root: webRoot,
@@ -34,13 +35,14 @@ export default defineConfig({
   },
   build: {
     outDir: path.join(projectDir, 'docs'),
-    emptyOutDir: true,
+    // Keep older bundles so a cached HTML page on WeChat/Chaoxing never points to a deleted file.
+    emptyOutDir: false,
     minify: 'terser',
     rollupOptions: {
       output: {
-        entryFileNames: 'assets/[name].js',
-        chunkFileNames: 'assets/chunks/[name].js',
-        assetFileNames: 'assets/[name][extname]',
+        entryFileNames: `assets/[name]-${releaseId}.js`,
+        chunkFileNames: `assets/chunks/[name]-${releaseId}.js`,
+        assetFileNames: `assets/[name]-${releaseId}[extname]`,
       },
       input: {
         home: path.join(webRoot, 'index.html'),
