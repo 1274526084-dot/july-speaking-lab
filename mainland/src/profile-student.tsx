@@ -13,8 +13,10 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  COLLEGE_MAJOR_OPTIONS,
+  COLLEGE_OPTIONS,
+  collegeForMajor,
   getStudentProfileKey,
-  MAJOR_OPTIONS,
   profilePath,
   profileRequest,
   setStudentProfileKey,
@@ -35,6 +37,7 @@ const defaultSkills = Object.fromEntries(Object.keys(SKILL_LABELS).map((key) => 
 type FormState = {
   studentName: string;
   className: string;
+  college: string;
   major: string;
   otherMajor: string;
   admissionType: 'gaokao' | 'single' | '';
@@ -59,7 +62,7 @@ type FormState = {
 };
 
 const initialForm: FormState = {
-  studentName: '', className: '', major: '', otherMajor: '', admissionType: '', entranceScoreKnown: true, entranceScore: '', entranceFullScore: '150',
+  studentName: '', className: '', college: '', major: '', otherMajor: '', admissionType: '', entranceScoreKnown: true, entranceScore: '', entranceFullScore: '150',
   skills: defaultSkills, confidence: 3, speakingAnxiety: 3, englishInterest: 3,
   weeklyTime: '', currentHabits: [], learningGoals: [], preferredActivities: [], difficulties: [],
   majorReasons: [], schoolReasons: [], careerPlan: '', semesterGoal: '', teacherMessage: '', deviceReady: '',
@@ -137,6 +140,7 @@ export function ProfileStudent() {
         setForm({
           ...initialForm,
           ...parsed,
+          college: parsed.college || collegeForMajor(parsed.major || ''),
           admissionType: parsed.admissionType || (isLegacyDraft ? 'gaokao' : ''),
           entranceScoreKnown: parsed.entranceScoreKnown ?? parsed.gaokaoKnown ?? true,
           entranceScore: parsed.entranceScore ?? parsed.gaokaoScore ?? '',
@@ -156,7 +160,7 @@ export function ProfileStudent() {
   const fullScoreValue = form.admissionType === 'gaokao' ? 150 : Number(form.entranceFullScore);
   const admissionLabel = form.admissionType === 'gaokao' ? '高考' : form.admissionType === 'single' ? '单招' : '';
   const answeredCount = useMemo(() => [
-    form.studentName, form.className, majorValue, form.admissionType,
+    form.studentName, form.className, form.college, majorValue, form.admissionType,
     !form.entranceScoreKnown || (Number.isFinite(scoreValue) && form.entranceScore !== '' && Number.isFinite(fullScoreValue) && fullScoreValue > 0),
     form.weeklyTime, form.learningGoals.length, form.majorReasons.length, form.schoolReasons.length,
   ].filter(Boolean).length, [form, fullScoreValue, majorValue, scoreValue]);
@@ -167,7 +171,7 @@ export function ProfileStudent() {
 
   function validateStep() {
     if (step === 0) {
-      if (!form.studentName.trim() || !form.className.trim() || !majorValue) return '请填写姓名、班级和专业。';
+      if (!form.studentName.trim() || !form.className.trim() || !form.college || !majorValue) return '请填写姓名、班级、学院和专业。';
       if (!form.admissionType) return '请选择你的入学方式：高考或单招。';
       if (form.entranceScoreKnown && (form.entranceScore === '' || !Number.isFinite(scoreValue) || scoreValue < 0)) return `请填写${admissionLabel}英语得分；如果不记得，可选择“不记得”。`;
       if (form.entranceScoreKnown && (!Number.isFinite(fullScoreValue) || fullScoreValue <= 0 || fullScoreValue > 1000)) return '英语科目满分请填写 1–1000 之间的数字。';
@@ -195,7 +199,7 @@ export function ProfileStudent() {
       const result = await profileRequest<{ ok: boolean; id: string; profileKey: string }>('submitProfile', {
         profileKey: getStudentProfileKey(),
         profile: {
-          studentName: form.studentName.trim(), className: form.className.trim(), major: majorValue,
+          studentName: form.studentName.trim(), className: form.className.trim(), college: form.college, major: majorValue,
           admissionType: form.admissionType,
           entranceScoreKnown: form.entranceScoreKnown,
           entranceScore: form.entranceScoreKnown ? scoreValue : null,
@@ -274,7 +278,10 @@ export function ProfileStudent() {
                   <label className="text-field"><span>姓名 *</span><input value={form.studentName} onChange={(event) => update('studentName', event.target.value)} maxLength={30} placeholder="请输入真实姓名" /></label>
                   <label className="text-field"><span>班级 *</span><input value={form.className} onChange={(event) => update('className', event.target.value)} maxLength={50} placeholder="如：城轨信号2401" /></label>
                 </div>
-                <label className="text-field"><span>专业 *</span><select value={form.major} onChange={(event) => update('major', event.target.value)}><option value="">请选择专业</option>{MAJOR_OPTIONS.map((option) => <option key={option}>{option}</option>)}</select></label>
+                <div className="two-columns">
+                  <label className="text-field"><span>学院 *</span><select value={form.college} onChange={(event) => setForm((current) => ({ ...current, college: event.target.value, major: '', otherMajor: '' }))}><option value="">请先选择学院</option>{COLLEGE_OPTIONS.map((option) => <option key={option}>{option}</option>)}</select></label>
+                  <label className="text-field"><span>专业 *</span><select value={form.major} disabled={!form.college} onChange={(event) => update('major', event.target.value)}><option value="">{form.college ? '请选择专业' : '选择学院后显示专业'}</option>{form.college && [...(COLLEGE_MAJOR_OPTIONS[form.college as keyof typeof COLLEGE_MAJOR_OPTIONS] || []), '其他专业'].map((option) => <option key={option}>{option}</option>)}</select></label>
+                </div>
                 {form.major === '其他专业' && <label className="text-field"><span>请填写专业名称 *</span><input value={form.otherMajor} onChange={(event) => update('otherMajor', event.target.value)} maxLength={60} placeholder="完整专业名称" /></label>}
                 <fieldset className="profile-fieldset">
                   <legend>你的入学方式是？ *</legend>
@@ -317,7 +324,20 @@ export function ProfileStudent() {
                 <div className="section-callout green"><School /><div><strong>了解你的选择</strong><p>这些信息帮助老师把英语任务与专业、校园生活和未来岗位联系起来。</p></div></div>
                 <ChoiceGroup title="你为什么选择现在的专业？ *" hint="请选择最符合你的1–3项" options={majorReasonOptions} values={form.majorReasons} onChange={(values) => update('majorReasons', values.slice(-3))} />
                 <ChoiceGroup title="你为什么选择柳州铁道职业技术学院？ *" hint="请选择最符合你的1–3项" options={schoolReasonOptions} values={form.schoolReasons} onChange={(values) => update('schoolReasons', values.slice(-3))} />
-                <fieldset className="profile-fieldset"><legend>毕业后的初步计划</legend><div className="radio-card-grid">{['进入铁路或轨道交通行业', '进入汽车或新能源行业', '专升本继续学习', '尝试其他行业', '还没有想好'].map((option) => <label key={option} className={form.careerPlan === option ? 'selected' : ''}><input type="radio" name="careerPlan" value={option} checked={form.careerPlan === option} onChange={(event) => update('careerPlan', event.target.value)} />{option}</label>)}</div></fieldset>
+                <fieldset className="profile-fieldset"><legend>毕业后的初步计划</legend><p className="field-hint">请选择目前最接近你想法的一项，以后可以更新。</p><div className="radio-card-grid">{[
+                  '进入铁路或轨道交通行业',
+                  '进入汽车或新能源行业',
+                  '进入智能制造、人工智能或通信行业',
+                  '进入与本专业相关的其他企业',
+                  '专升本继续学习',
+                  '参加公务员、事业单位或国企招考',
+                  '参军入伍',
+                  '自主创业或从事自由职业',
+                  '回家乡就业发展',
+                  '先就业，积累经验后再规划',
+                  '尝试与本专业不同的行业',
+                  '还没有想好',
+                ].map((option) => <label key={option} className={form.careerPlan === option ? 'selected' : ''}><input type="radio" name="careerPlan" value={option} checked={form.careerPlan === option} onChange={(event) => update('careerPlan', event.target.value)} />{option}</label>)}</div></fieldset>
               </div>
             )}
 

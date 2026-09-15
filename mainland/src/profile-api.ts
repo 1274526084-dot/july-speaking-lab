@@ -46,13 +46,67 @@ export async function profileRequest<T>(action: string, data: Record<string, unk
   return payload;
 }
 
-export const MAJOR_OPTIONS = [
-  '铁道机车运用与维护',
-  '城市轨道交通通信信号技术',
-  '储能材料技术',
-  '新能源汽车技术',
-  '其他专业',
-] as const;
+export const COLLEGE_MAJOR_OPTIONS = {
+  '汽车与新能源学院': [
+    '电力储能应用技术',
+    '汽车技术服务与营销',
+    '汽车制造与试验技术',
+    '新能源汽车技术',
+    '智能网联汽车技术',
+  ],
+  '人工智能及机器人学院': [
+    '人工智能技术应用',
+    '数字媒体艺术设计',
+    '无人机应用技术',
+    '智能机器人技术',
+  ],
+  '铁道工程学院': [
+    '道路与桥梁工程技术',
+    '工程测量技术',
+    '建筑工程技术',
+    '铁道工程技术',
+    '铁道桥梁隧道工程技术',
+  ],
+  '铁道机车车辆学院': [
+    '城市轨道车辆应用技术',
+    '动车组检修技术',
+    '铁道车辆技术',
+    '铁道供电技术',
+    '铁道机车车辆制造与维护',
+    '铁道机车运用与维护',
+  ],
+  '铁道通信信号学院': [
+    '城市轨道交通通信信号技术',
+    '物联网应用技术',
+    '现代通信技术',
+    '信息安全技术应用',
+    '铁道通信与信息化技术',
+    '铁道信号自动控制',
+  ],
+  '铁道运输管理学院': [
+    '城市轨道交通运营管理',
+    '大数据与会计',
+    '高速铁路客运服务',
+    '酒店管理与数字化运营',
+    '铁道交通运营管理',
+    '铁路物流管理',
+    '铁路物流管理（多式联运）',
+  ],
+  '智能制造学院': [
+    '电气自动化技术',
+    '机电一体化技术',
+    '机械制造及自动化',
+    '数字化设计与制造技术',
+    '智能控制技术',
+  ],
+} as const;
+
+export const COLLEGE_OPTIONS = Object.keys(COLLEGE_MAJOR_OPTIONS) as Array<keyof typeof COLLEGE_MAJOR_OPTIONS>;
+export const MAJOR_OPTIONS = Object.values(COLLEGE_MAJOR_OPTIONS).flat();
+
+export function collegeForMajor(major: string) {
+  return COLLEGE_OPTIONS.find((college) => (COLLEGE_MAJOR_OPTIONS[college] as readonly string[]).includes(major)) || '';
+}
 
 export const SKILL_LABELS = {
   listening: '听力',
@@ -70,6 +124,7 @@ export type EnglishProfile = {
   id: string;
   student_name: string;
   class_name: string;
+  college?: string;
   major: string;
   admission_type?: 'gaokao' | 'single';
   entrance_score_known?: boolean;

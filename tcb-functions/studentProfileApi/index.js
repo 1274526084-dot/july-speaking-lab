@@ -147,6 +147,7 @@ function normalizeIdentity(value) {
 function sanitizeProfile(raw) {
   const studentName = cleanText(raw?.studentName, 30);
   const className = cleanText(raw?.className, 50);
+  const college = cleanText(raw?.college, 60);
   const major = cleanText(raw?.major, 60);
   const legacyRequest = raw?.gaokaoKnown !== undefined || raw?.gaokaoScore !== undefined;
   const admissionType = raw?.admissionType === 'single' || raw?.admissionType === 'gaokao' ? raw.admissionType : legacyRequest ? 'gaokao' : '';
@@ -163,6 +164,7 @@ function sanitizeProfile(raw) {
   return {
     student_name: studentName,
     class_name: className,
+    college,
     major,
     admission_type: admissionType,
     entrance_score_known: entranceScoreKnown,
@@ -210,6 +212,7 @@ function publicProfile(row) {
     id: row.id,
     student_name: row.student_name,
     class_name: row.class_name,
+    college: row.college || '',
     major: row.major,
     admission_type: admissionType,
     entrance_score_known: entranceScoreKnown,

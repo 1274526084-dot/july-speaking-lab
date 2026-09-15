@@ -15,6 +15,8 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   clearProfileTeacherToken,
+  COLLEGE_OPTIONS,
+  collegeForMajor,
   getProfileTeacherToken,
   profilePath,
   profileRequest,
@@ -63,6 +65,10 @@ function entranceScoreInfo(row: EnglishProfile) {
   };
 }
 
+function profileCollege(row: EnglishProfile) {
+  return row.college || collegeForMajor(row.major) || '未填写';
+}
+
 function Metric({ icon, value, label, note }: { icon: React.ReactNode; value: string | number; label: string; note: string }) {
   return <article className="dashboard-metric"><span>{icon}</span><div><strong>{value}</strong><p>{label}</p><small>{note}</small></div></article>;
 }
@@ -97,6 +103,7 @@ export function ProfileTeacher() {
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [keyword, setKeyword] = useState('');
+  const [collegeFilter, setCollegeFilter] = useState('');
   const [classFilter, setClassFilter] = useState('');
   const [majorFilter, setMajorFilter] = useState('');
   const [admissionFilter, setAdmissionFilter] = useState('');
@@ -127,9 +134,10 @@ export function ProfileTeacher() {
   const majors = useMemo(() => [...new Set(rows.map((row) => row.major))].sort((a, b) => a.localeCompare(b, 'zh-CN')), [rows]);
   const filtered = useMemo(() => rows.filter((row) => {
     const scoreInfo = entranceScoreInfo(row);
-    const searchable = normalize(`${row.student_name}${row.class_name}${row.major}${scoreInfo.typeLabel}`);
-    return (!keyword || searchable.includes(normalize(keyword))) && (!classFilter || row.class_name === classFilter) && (!majorFilter || row.major === majorFilter) && (!admissionFilter || scoreInfo.type === admissionFilter) && (!supportOnly || isNeedsSupport(row));
-  }), [admissionFilter, classFilter, keyword, majorFilter, rows, supportOnly]);
+    const college = profileCollege(row);
+    const searchable = normalize(`${row.student_name}${row.class_name}${college}${row.major}${scoreInfo.typeLabel}`);
+    return (!keyword || searchable.includes(normalize(keyword))) && (!collegeFilter || college === collegeFilter) && (!classFilter || row.class_name === classFilter) && (!majorFilter || row.major === majorFilter) && (!admissionFilter || scoreInfo.type === admissionFilter) && (!supportOnly || isNeedsSupport(row));
+  }), [admissionFilter, classFilter, collegeFilter, keyword, majorFilter, rows, supportOnly]);
 
   const scoreInfos = filtered.map(entranceScoreInfo);
   const knownScoreRates = scoreInfos.filter((item) => item.known && item.rate !== null).map((item) => Number(item.rate));
@@ -163,10 +171,10 @@ export function ProfileTeacher() {
 
   function exportCsv() {
     const cell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-    const headers = ['提交时间', '姓名', '班级', '专业', '入学方式', '英语得分', '英语满分', '英语得分率', ...skillKeys.map((key) => `${SKILL_LABELS[key]}/5`), '学习信心/5', '口语紧张/5', '英语兴趣/5', '每周课外时间', '学习习惯', '困难', '学习目标', '喜欢的活动', '择专业原因', '择校原因', '毕业计划', '本学期目标', '给老师的话', '设备情况'];
+    const headers = ['提交时间', '姓名', '班级', '学院', '专业', '入学方式', '英语得分', '英语满分', '英语得分率', ...skillKeys.map((key) => `${SKILL_LABELS[key]}/5`), '学习信心/5', '口语紧张/5', '英语兴趣/5', '每周课外时间', '学习习惯', '困难', '学习目标', '喜欢的活动', '择专业原因', '择校原因', '毕业计划', '本学期目标', '给老师的话', '设备情况'];
     const lines = filtered.map((row) => {
       const scoreInfo = entranceScoreInfo(row);
-      return [dateText(row.updated_at), row.student_name, row.class_name, row.major, scoreInfo.typeLabel, scoreInfo.known ? scoreInfo.score : '未填写', scoreInfo.known ? scoreInfo.fullScore : '未填写', scoreInfo.rate === null ? '未填写' : `${scoreInfo.rate.toFixed(1)}%`, ...skillKeys.map((key) => row.skills[key]), row.confidence, row.speaking_anxiety, row.english_interest, row.weekly_time, row.current_habits.join('；'), row.difficulties.join('；'), row.learning_goals.join('；'), row.preferred_activities.join('；'), row.major_reasons.join('；'), row.school_reasons.join('；'), row.career_plan, row.semester_goal, row.teacher_message, row.device_ready].map(cell).join(',');
+      return [dateText(row.updated_at), row.student_name, row.class_name, profileCollege(row), row.major, scoreInfo.typeLabel, scoreInfo.known ? scoreInfo.score : '未填写', scoreInfo.known ? scoreInfo.fullScore : '未填写', scoreInfo.rate === null ? '未填写' : `${scoreInfo.rate.toFixed(1)}%`, ...skillKeys.map((key) => row.skills[key]), row.confidence, row.speaking_anxiety, row.english_interest, row.weekly_time, row.current_habits.join('；'), row.difficulties.join('；'), row.learning_goals.join('；'), row.preferred_activities.join('；'), row.major_reasons.join('；'), row.school_reasons.join('；'), row.career_plan, row.semester_goal, row.teacher_message, row.device_ready].map(cell).join(',');
     });
     const blob = new Blob([`\uFEFF${[headers.map(cell).join(','), ...lines].join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `July-英语学习档案-${new Date().toISOString().slice(0, 10)}.csv`; anchor.click(); URL.revokeObjectURL(url);
@@ -190,7 +198,8 @@ export function ProfileTeacher() {
         </section>
 
         <section className="dashboard-filters">
-          <label className="search-control"><Search /><input type="search" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索姓名、班级或专业" />{keyword && <button type="button" onClick={() => setKeyword('')} aria-label="清除搜索"><X /></button>}</label>
+          <label className="search-control"><Search /><input type="search" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索姓名、班级、学院或专业" />{keyword && <button type="button" onClick={() => setKeyword('')} aria-label="清除搜索"><X /></button>}</label>
+          <select value={collegeFilter} onChange={(event) => setCollegeFilter(event.target.value)}><option value="">全部学院</option>{COLLEGE_OPTIONS.map((value) => <option key={value}>{value}</option>)}</select>
           <select value={classFilter} onChange={(event) => setClassFilter(event.target.value)}><option value="">全部班级</option>{classes.map((value) => <option key={value}>{value}</option>)}</select>
           <select value={majorFilter} onChange={(event) => setMajorFilter(event.target.value)}><option value="">全部专业</option>{majors.map((value) => <option key={value}>{value}</option>)}</select>
           <select value={admissionFilter} onChange={(event) => setAdmissionFilter(event.target.value)}><option value="">全部入学方式</option><option value="gaokao">高考</option><option value="single">单招</option></select>
@@ -232,7 +241,7 @@ export function ProfileTeacher() {
               {filtered.length ? <div className="profile-list">{filtered.map((row) => (
                 <article key={row.id} className="student-profile-row">
                   <span className="avatar">{row.student_name.slice(0, 1)}</span>
-                  <div className="student-main"><strong>{row.student_name}</strong><p>{row.class_name} · {row.major}</p></div>
+                  <div className="student-main"><strong>{row.student_name}</strong><p>{row.class_name} · {profileCollege(row)} · {row.major}</p></div>
                   <div><small>入学英语</small><strong>{entranceScoreInfo(row).text}</strong></div>
                   <div><small>技能自评</small><strong>{avg(skillKeys.map((key) => row.skills[key])).toFixed(1)} / 5</strong></div>
                   <div><small>学习目标</small><p className="tag-line">{row.learning_goals.slice(0, 2).join(' · ') || '未填写'}</p></div>
@@ -247,7 +256,7 @@ export function ProfileTeacher() {
 
       {selected && <div className="profile-modal-backdrop" role="presentation" onMouseDown={() => setSelected(null)}>
         <section className="profile-modal" role="dialog" aria-modal="true" aria-label={`${selected.student_name}的英语学习档案`} onMouseDown={(event) => event.stopPropagation()}>
-          <header><div><p className="eyebrow">STUDENT PROFILE</p><h2>{selected.student_name}</h2><span>{selected.class_name} · {selected.major}</span></div><button type="button" onClick={() => setSelected(null)} aria-label="关闭档案"><X /></button></header>
+          <header><div><p className="eyebrow">STUDENT PROFILE</p><h2>{selected.student_name}</h2><span>{selected.class_name} · {profileCollege(selected)} · {selected.major}</span></div><button type="button" onClick={() => setSelected(null)} aria-label="关闭档案"><X /></button></header>
           <div className="modal-content">
             <section className="profile-overview-cards"><div><small>入学英语</small><strong>{entranceScoreInfo(selected).text}</strong></div><div><small>学习信心</small><strong>{selected.confidence} / 5</strong></div><div><small>口语紧张</small><strong>{selected.speaking_anxiety} / 5</strong></div><div><small>英语兴趣</small><strong>{selected.english_interest} / 5</strong></div></section>
             <section className="modal-block"><h3>七项技能自评</h3><div className="modal-skills">{skillKeys.map((key) => <div key={key}><span>{SKILL_LABELS[key]}</span><strong>{selected.skills[key]} / 5</strong></div>)}</div></section>
