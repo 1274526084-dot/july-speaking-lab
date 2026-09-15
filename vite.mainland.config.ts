@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/postcss';
 import react from '@vitejs/plugin-react';
+import legacy from '@vitejs/plugin-legacy';
 import { defineConfig } from 'vite';
 
 const projectDir = path.dirname(fileURLToPath(import.meta.url));
@@ -13,6 +14,11 @@ export default defineConfig({
   publicDir: path.join(projectDir, 'public'),
   plugins: [
     react(),
+    legacy({
+      targets: ['Chrome >= 49', 'Android >= 5', 'iOS >= 10'],
+      renderLegacyChunks: true,
+      modernPolyfills: true,
+    }),
     {
       name: 'github-pages-nojekyll',
       generateBundle() {
@@ -29,7 +35,13 @@ export default defineConfig({
   build: {
     outDir: path.join(projectDir, 'docs'),
     emptyOutDir: true,
+    minify: 'terser',
     rollupOptions: {
+      output: {
+        entryFileNames: 'assets/[name].js',
+        chunkFileNames: 'assets/chunks/[name].js',
+        assetFileNames: 'assets/[name][extname]',
+      },
       input: {
         home: path.join(webRoot, 'index.html'),
         student: path.join(webRoot, 'student', 'index.html'),
@@ -38,6 +50,9 @@ export default defineConfig({
         wordStudent: path.join(webRoot, 'words', 'index.html'),
         wordTeacher: path.join(webRoot, 'words', 'teacher', 'index.html'),
         wordAdmin: path.join(webRoot, 'words', 'admin', 'index.html'),
+        profileStudent: path.join(webRoot, 'profile', 'index.html'),
+        profileTeacher: path.join(webRoot, 'profile', 'teacher', 'index.html'),
+        profileTeacherLogin: path.join(webRoot, 'profile', 'teacher', 'login', 'index.html'),
       },
     },
   },

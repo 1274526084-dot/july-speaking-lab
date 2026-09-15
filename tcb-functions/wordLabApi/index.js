@@ -1,5 +1,6 @@
 /* oxlint-disable typescript/no-require-imports */
 const cloudbase = require('@cloudbase/node-sdk');
+const { asr } = require('tencentcloud-sdk-nodejs-asr');
 const { createHash, pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual } = require('node:crypto');
 
 const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
@@ -11,10 +12,12 @@ const UNITS = 'word_units';
 const ATTEMPTS = 'word_attempts';
 const SESSIONS = 'word_sessions';
 const RATES = 'word_rates';
+const RECOGNITION_CHUNKS = 'word_recognition_chunks';
 const SESSION_MS = 8 * 60 * 60 * 1000;
 const ADMIN_SALT = 'db0ec8f7c8632bb51ebccc49114ba1f8';
 const ADMIN_HASH = '7847a75d46d7436bca0f3895644ae0cff889215c859ba3390aaa5aa5f5f53cb8';
 const MAX_AUDIO_BYTES = 2 * 1024 * 1024;
+const MAX_RECOGNITION_BYTES = 800 * 1024;
 const ALLOWED_ORIGINS = new Set([
   'https://1274526084-dot.github.io',
   'http://localhost:4173',
@@ -22,6 +25,7 @@ const ALLOWED_ORIGINS = new Set([
 ]);
 
 let collectionsReady;
+let asrClient;
 
 function headersFrom(event) {
   return Object.fromEntries(Object.entries(event.headers || {}).map(([key, value]) => [key.toLowerCase(), String(value)]));
@@ -93,7 +97,7 @@ function isCollectionExistsError(error) {
 async function ensureCollections() {
   if (!collectionsReady) {
     collectionsReady = (async () => {
-      for (const name of [TEACHERS, UNITS, ATTEMPTS, SESSIONS, RATES]) {
+      for (const name of [TEACHERS, UNITS, ATTEMPTS, SESSIONS, RATES, RECOGNITION_CHUNKS]) {
         try {
           await db.createCollection(name);
         } catch (error) {
@@ -201,6 +205,77 @@ function decodeAudio(audio) {
   const buffer = Buffer.from(data, 'base64');
   if (!buffer.length || buffer.length > MAX_AUDIO_BYTES) return null;
   return { type, buffer };
+}
+
+function voiceFormatFor(type) {
+  const value = String(type || '').toLowerCase();
+  if (value.includes('wav')) return 'wav';
+  if (value.includes('mpeg') || value.includes('mp3')) return 'mp3';
+  if (value.includes('m4a') || value.includes('mp4')) return 'm4a';
+  if (value.includes('aac')) return 'aac';
+  if (value.includes('amr')) return 'amr';
+  if (value.includes('ogg')) return 'ogg-opus';
+  return '';
+}
+
+function getAsrClient() {
+  if (asrClient) return asrClient;
+  const context = cloudbase.getCloudbaseContext();
+  const secretId = context.TENCENTCLOUD_SECRETID || process.env.TENCENTCLOUD_SECRETID || process.env.TENCENTCLOUD_SECRET_ID;
+  const secretKey = context.TENCENTCLOUD_SECRETKEY || process.env.TENCENTCLOUD_SECRETKEY || process.env.TENCENTCLOUD_SECRET_KEY;
+  const token = context.TENCENTCLOUD_SESSIONTOKEN || process.env.TENCENTCLOUD_SESSIONTOKEN || process.env.TENCENTCLOUD_TOKEN;
+  if (!secretId || !secretKey) throw new Error('ASR_RUNTIME_CREDENTIALS_MISSING');
+  const Client = asr.v20190614.Client;
+  asrClient = new Client({ credential: { secretId, secretKey, token }, region: '', profile: { httpProfile: { endpoint: 'asr.tencentcloudapi.com', reqTimeout: 12 } } });
+  return asrClient;
+}
+
+async function recognizeWordBuffer(event, type, buffer, target) {
+  const format = voiceFormatFor(type);
+  if (!format || !buffer.length || buffer.length > MAX_RECOGNITION_BYTES) return response(event, 400, { ok: false, error: '这段录音无法识别，请重新录制。' });
+  try {
+    const hotwords = cleanText(target, 80).split(/\s+/).filter(Boolean).map((word) => `${word}|10`).join(',');
+    const result = await getAsrClient().SentenceRecognition({
+      EngSerViceType: '16k_en', SourceType: 1, VoiceFormat: format,
+      Data: buffer.toString('base64'), DataLen: buffer.length, WordInfo: 0,
+      FilterDirty: 0, FilterModal: 0, FilterPunc: 0, ConvertNumMode: 1,
+      HotwordList: hotwords,
+    });
+    return response(event, 200, { ok: true, transcript: cleanText(result.Result, 180), durationMs: cleanInt(result.AudioDuration, 0, 20000) });
+  } catch (error) {
+    console.error('wordLab recognize failed', `${error?.code || ''} ${error?.message || ''}`, error?.requestId || '');
+    return response(event, 502, { ok: false, error: '云端暂时没有识别成功，将继续使用录音对比评分。' });
+  }
+}
+
+async function handleRecognizeWordChunk(event, body) {
+  if (!(await rateLimit(event, 'word-asr', 600))) return response(event, 429, { ok: false, error: '识别请求较多，请稍后再试。' });
+  const uploadId = cleanText(body.uploadId, 80);
+  const target = cleanText(body.target, 80);
+  const type = cleanText(body.type, 80);
+  const data = typeof body.data === 'string' ? body.data : '';
+  const chunkIndex = cleanInt(body.chunkIndex, 0, 31);
+  const totalChunks = cleanInt(body.totalChunks, 1, 32);
+  if (!/^[a-z0-9-]{20,80}$/i.test(uploadId) || !target || !voiceFormatFor(type) || chunkIndex >= totalChunks || !data || data.length > 65000) {
+    return response(event, 400, { ok: false, error: '录音分片无效，请重新录制。' });
+  }
+  const decoded = Buffer.from(data, 'base64');
+  if (!decoded.length || decoded.length > 50000) return response(event, 400, { ok: false, error: '录音分片过大，请重新录制。' });
+  const ipHash = sha256(clientIp(event));
+  const chunkId = `word-asr-${uploadId}-${chunkIndex}`;
+  await db.collection(RECOGNITION_CHUNKS).doc(chunkId).set({ upload_id: uploadId, target, type, chunk_index: chunkIndex, total_chunks: totalChunks, data, ip_hash: ipHash, created_at: Date.now() });
+  if (chunkIndex + 1 < totalChunks) return response(event, 200, { ok: true, pending: true, received: chunkIndex + 1 });
+  const ids = Array.from({ length: totalChunks }, (_, index) => `word-asr-${uploadId}-${index}`);
+  try {
+    const rows = await Promise.all(ids.map((id) => getDocument(RECOGNITION_CHUNKS, id)));
+    if (rows.some((row, index) => !row || row.ip_hash !== ipHash || row.upload_id !== uploadId || row.target !== target || row.type !== type || Number(row.chunk_index) !== index || Number(row.total_chunks) !== totalChunks)) {
+      return response(event, 400, { ok: false, error: '录音分片不完整，请重新录制。' });
+    }
+    const buffer = Buffer.concat(rows.map((row) => Buffer.from(row.data, 'base64')));
+    return recognizeWordBuffer(event, type, buffer, target);
+  } finally {
+    await Promise.all(ids.map((id) => db.collection(RECOGNITION_CHUNKS).doc(id).remove().catch(() => undefined)));
+  }
 }
 
 function cleanWords(words) {
@@ -891,6 +966,7 @@ exports.main = async (event) => {
     if (action === 'teacherPublishUnit') return handleTeacherPublish(event, body);
     if (action === 'studentGetUnit') return handleStudentGetUnit(event, body);
     if (action === 'studentStart') return handleStudentStart(event, body);
+    if (action === 'recognizeWordChunk') return handleRecognizeWordChunk(event, body);
     if (action === 'studentPrepareWordUpload') return handleStudentPrepareWordUpload(event, body);
     if (action === 'studentConfirmWord') return handleStudentConfirmWord(event, body);
     if (action === 'studentSubmitWord') return handleStudentSubmitWord(event, body);

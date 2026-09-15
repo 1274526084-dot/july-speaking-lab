@@ -1,0 +1,1 @@
+import{f as r}from"./jsx-runtime.js";var a=r("arrow-left",[["path",{d:"m12 19-7-7 7-7",key:"1l729n"}],["path",{d:"M19 12H5",key:"x3x0zl"}]]),e=r("check",[["path",{d:"M20 6 9 17l-5-5",key:"1gmf2c"}]]),t=r("user-round",[["circle",{cx:"12",cy:"8",r:"5",key:"1hypcn"}],["path",{d:"M20 21a8 8 0 0 0-16 0",key:"rfgkzh"}]]);export{e as n,a as r,t};

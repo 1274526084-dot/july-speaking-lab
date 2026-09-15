@@ -1,0 +1,1 @@
+System.register(["./chunks/jsx-runtime-legacy.js","./chunks/main-legacy.js"],function(n,e){return{setters:[function(n){},function(n){}],execute:function(){}}});

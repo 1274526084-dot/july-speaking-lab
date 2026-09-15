@@ -1,15 +1,23 @@
-# July English Speaking Lab
+# July English Learning Labs
 
-面向《公共英语1》课堂的校园英语口语自主练习网站。
+面向《公共英语1》课堂的三套独立学习工具：校园情景口语、单词跟读和课前英语学习档案。网页由 GitHub Pages 打开，录音、学习档案和教师数据保存在腾讯云 CloudBase。
 
 学生可以先跟读四个校园场景的示范对话，再任选一个场景完成三轮模拟对话；系统会提供句型提示、学习建议和任务型评分，并把对话文本与学生同意上传的录音保存到教师后台。
 
-## 网站入口
+## 校园情景口语
 
-- 学生统一入口：<https://1274526084-dot.github.io/july-speaking-lab/student/>
-- 教师数据入口：<https://1274526084-dot.github.io/july-speaking-lab/teacher>
+- 学生端：<https://1274526084-dot.github.io/july-speaking-lab/student/>
+- 教师端：<https://1274526084-dot.github.io/july-speaking-lab/teacher/login/>
 
-网页本体直接由 GitHub Pages 打开，不再跳转到其他网站；录音上传、数据保存和教师密码验证由腾讯云 CloudBase 接口处理。
+## 单词跟读
+
+- 学生端：<https://1274526084-dot.github.io/july-speaking-lab/words/>
+- 教师端：<https://1274526084-dot.github.io/july-speaking-lab/words/teacher/>
+
+## 课前英语学习档案
+
+- 学生端：<https://1274526084-dot.github.io/july-speaking-lab/profile/>
+- 教师端：<https://1274526084-dot.github.io/july-speaking-lab/profile/teacher/login/>
 
 ## 主要功能
 
@@ -18,6 +26,8 @@
 - 对话结束后获得分项评分与改进建议
 - 经学生确认后上传练习录音、对话和评分
 - 教师后台查看数据、逐轮回听录音并导出 CSV
+- 旧版安卓和微信/学习通内置浏览器兼容包
+- 手机浏览器识别失败时改用腾讯云英文识别，并保留录音兜底
 
 ## 隐私说明
 
