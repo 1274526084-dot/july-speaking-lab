@@ -16,7 +16,9 @@ const ATTEMPTS = 'speaking_attempts';
 const SESSIONS = 'speaking_sessions';
 const RATES = 'speaking_rates';
 const RECOGNITION_CHUNKS = 'speaking_recognition_chunks';
+const UPLOADS = 'speaking_uploads';
 const SESSION_MS = 8 * 60 * 60 * 1000;
+const UPLOAD_SESSION_MS = 20 * 60 * 1000;
 const AUTH_VERSION = 2;
 const TEACHER_ACCOUNTS = {
   cherie: {
@@ -133,7 +135,7 @@ function isCollectionExistsError(error) {
 async function ensureCollections() {
   if (!collectionsReady) {
     collectionsReady = (async () => {
-      for (const name of [ATTEMPTS, SESSIONS, RATES, RECOGNITION_CHUNKS]) {
+      for (const name of [ATTEMPTS, SESSIONS, RATES, RECOGNITION_CHUNKS, UPLOADS]) {
         try {
           await db.createCollection(name);
         } catch (error) {
@@ -522,6 +524,128 @@ async function handleLogin(event, body) {
   });
 }
 
+function sanitizeAttemptPayload(payload) {
+  const studentName = cleanText(payload.studentName, 40);
+  const studentId = cleanText(payload.studentId, 40);
+  const className = cleanText(payload.className, 60);
+  const sceneId = cleanText(payload.sceneId, 30);
+  const sceneTitle = cleanText(payload.sceneTitle, 100);
+  const transcript = cleanText(payload.transcript, 4000);
+  const feedback = cleanText(payload.feedback, 1000);
+  if (!studentName || !studentId || !className || !SCENES.has(sceneId) || !transcript) return null;
+  return {
+    student_name: studentName,
+    student_id: studentId,
+    class_name: className,
+    scene_id: sceneId,
+    scene_title: sceneTitle,
+    transcript,
+    coverage: cleanInt(payload.coverage, 0, 100),
+    confidence: payload.confidence == null ? null : cleanInt(payload.confidence, 0, 100),
+    duration_seconds: cleanInt(payload.durationSeconds, 1, 7200),
+    attempts: cleanInt(payload.attempts, 1, 20),
+    task_score: cleanInt(payload.taskScore, 0, 40),
+    sentence_score: cleanInt(payload.sentenceScore, 0, 30),
+    clarity_score: cleanInt(payload.clarityScore, 0, 20),
+    interaction_score: cleanInt(payload.interactionScore, 0, 10),
+    total_score: cleanInt(payload.totalScore, 0, 100),
+    feedback,
+  };
+}
+
+function uploadTokenMatches(token, expectedHash) {
+  if (!/^[0-9a-f]{48}$/i.test(String(token || '')) || !/^[0-9a-f]{64}$/i.test(String(expectedHash || ''))) return false;
+  const actual = Buffer.from(sha256(token), 'hex');
+  const expected = Buffer.from(expectedHash, 'hex');
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+async function handlePrepareUpload(event, body) {
+  if (!(await checkSubmissionRate(event))) return response(event, 429, { ok: false, error: '提交次数过多，请稍后再试。' });
+  const payload = body.payload || {};
+  const attempt = sanitizeAttemptPayload(payload);
+  const clips = Array.isArray(body.audio) ? body.audio.slice(0, 4) : [];
+  if (!attempt) return response(event, 400, { ok: false, error: '请填写姓名、学号和班级，并完成三轮对话。' });
+  if (payload.recordingConsent !== true || clips.length < 1 || clips.length > 3) {
+    return response(event, 400, { ok: false, error: '正式提交需要同意上传一至三段练习录音。' });
+  }
+  const audio = [];
+  let totalBytes = 0;
+  const rounds = new Set();
+  for (const clip of clips) {
+    const round = cleanInt(clip?.round, 1, 3);
+    const type = cleanText(clip?.type, 80) || 'audio/wav';
+    const rawBytes = Number(clip?.bytes);
+    const bytes = Number.isFinite(rawBytes) && rawBytes > 0 ? Math.round(rawBytes) : 0;
+    if (!type.startsWith('audio/') || !bytes || bytes > MAX_CLIP_BYTES || rounds.has(round)) {
+      return response(event, 400, { ok: false, error: '录音格式或大小不符合要求，请重新录制。' });
+    }
+    rounds.add(round);
+    totalBytes += bytes;
+    audio.push({ round, type, bytes });
+  }
+  if (totalBytes > MAX_TOTAL_BYTES) return response(event, 400, { ok: false, error: '本次录音总长度过大，请缩短回答后重新录制。' });
+
+  const id = randomUUID();
+  const submitToken = randomBytes(24).toString('hex');
+  const date = new Date().toISOString().slice(0, 10);
+  const manifest = [];
+  const uploads = [];
+  for (const clip of audio) {
+    const cloudPath = `july-speaking-lab/audio/${date}/${id}/round-${clip.round}.${extensionFor(clip.type)}`;
+    const metadata = await app.getUploadMetadata({ cloudPath });
+    const upload = metadata?.data || {};
+    if (!upload.url || !upload.fileId || !upload.authorization || !upload.token || !upload.cosFileId) {
+      return response(event, 500, { ok: false, error: '暂时无法准备录音上传，请稍后重试。' });
+    }
+    manifest.push({ key: upload.fileId, cloud_path: cloudPath, type: clip.type, expected_size: clip.bytes, round: clip.round });
+    uploads.push({ round: clip.round, url: upload.url, token: upload.token, authorization: upload.authorization, fileId: upload.fileId, cosFileId: upload.cosFileId, cloudPath });
+  }
+  await db.collection(UPLOADS).doc(id).set({
+    id,
+    submit_token_hash: sha256(submitToken),
+    attempt_json: JSON.stringify(attempt),
+    audio_manifest: JSON.stringify(manifest),
+    created_at: Date.now(),
+    expires_at: Date.now() + UPLOAD_SESSION_MS,
+  });
+  return response(event, 200, { ok: true, uploadId: id, submitToken, uploads });
+}
+
+async function handleConfirmUpload(event, body) {
+  const id = cleanText(body.uploadId, 64);
+  const pending = id ? await getDocument(UPLOADS, id) : null;
+  if (!pending || Number(pending.expires_at || 0) <= Date.now() || !uploadTokenMatches(body.submitToken, pending.submit_token_hash)) {
+    return response(event, 401, { ok: false, error: '上传凭证已失效，请点击重新上传。' });
+  }
+  let attempt;
+  let manifest;
+  try {
+    attempt = JSON.parse(pending.attempt_json || '{}');
+    manifest = JSON.parse(pending.audio_manifest || '[]');
+  } catch {
+    return response(event, 400, { ok: false, error: '上传信息无效，请重新上传。' });
+  }
+  if (!attempt || !Array.isArray(manifest) || !manifest.length) return response(event, 400, { ok: false, error: '上传信息不完整，请重新上传。' });
+  const info = await app.getFileInfo({ fileList: manifest.map((item) => item.key) });
+  const storedById = new Map((info.fileList || []).map((item) => [item.fileID, item]));
+  const savedManifest = [];
+  let totalBytes = 0;
+  for (const item of manifest) {
+    const stored = storedById.get(item.key);
+    const size = Number(stored?.size || 0);
+    if (stored?.code !== 'SUCCESS' || !size) return response(event, 400, { ok: false, error: `第${item.round}轮录音尚未上传完成，请重试。` });
+    if (size > MAX_CLIP_BYTES || size !== Number(item.expected_size)) return response(event, 400, { ok: false, error: `第${item.round}轮录音大小校验失败，请重新上传。` });
+    totalBytes += size;
+    savedManifest.push({ key: item.key, type: item.type, size, round: item.round });
+  }
+  if (totalBytes > MAX_TOTAL_BYTES) return response(event, 400, { ok: false, error: '本次录音总长度过大，请重新录制。' });
+  const submittedAt = Date.now();
+  await db.collection(ATTEMPTS).doc(id).set({ ...attempt, id, audio_manifest: JSON.stringify(savedManifest), submitted_at: submittedAt });
+  await db.collection(UPLOADS).doc(id).remove().catch(() => undefined);
+  return response(event, 200, { ok: true, id });
+}
+
 async function handleSubmit(event, body) {
   if (!(await checkSubmissionRate(event)))
     return response(event, 429, {
@@ -716,6 +840,8 @@ exports.main = async (event) => {
     const action = cleanText(body.action, 40);
     if (action === 'recognizeChunk') return handleRecognizeChunk(event, body);
     if (action === 'recognize') return handleRecognize(event, body);
+    if (action === 'prepareUpload') return handlePrepareUpload(event, body);
+    if (action === 'confirmUpload') return handleConfirmUpload(event, body);
     if (action === 'submit') return handleSubmit(event, body);
     if (action === 'teacherLogin') return handleLogin(event, body);
     if (action === 'session') {

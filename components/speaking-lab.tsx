@@ -27,6 +27,15 @@ type Message = {
   fallback?: boolean;
 };
 type AudioClip = { round: number; blob: Blob };
+type CloudUploadTicket = {
+  round: number;
+  url: string;
+  token: string;
+  authorization: string;
+  fileId: string;
+  cosFileId: string;
+  cloudPath: string;
+};
 type RoundScore = {
   task: number;
   sentence: number;
@@ -174,6 +183,55 @@ function blobToBase64(blob: Blob) {
   });
 }
 
+async function postCloudJson<T>(url: string, body: Record<string, unknown>, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const raw = await response.text();
+    let payload: T & { ok?: boolean; error?: string };
+    try { payload = JSON.parse(raw) as T & { ok?: boolean; error?: string }; }
+    catch { payload = {} as T & { ok?: boolean; error?: string }; }
+    if (!response.ok || payload.ok === false) throw new Error(payload.error || `请求失败（${response.status}）`);
+    return payload;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw new Error('网络连接超时，请点击“重新上传”。');
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+async function uploadCloudRecording(ticket: CloudUploadTicket, blob: Blob) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 45000);
+  try {
+    const response = await fetch(ticket.url, {
+      method: 'PUT',
+      headers: {
+        Signature: ticket.authorization,
+        authorization: ticket.authorization,
+        'x-cos-security-token': ticket.token,
+        'x-cos-meta-fileid': ticket.cosFileId,
+        key: encodeURIComponent(ticket.cloudPath),
+      },
+      body: blob,
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`第${ticket.round}轮录音上传失败，请重试。`);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw new Error(`第${ticket.round}轮录音上传超时，请检查网络后重试。`);
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 function pcmToWav(
   chunks: Float32Array[],
   sourceRate: number,
@@ -251,6 +309,7 @@ export function SpeakingLab({
   const [startedAt, setStartedAt] = useState(0);
   const [submission, setSubmission] = useState<Submission | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState('正在准备上传……');
   const [isCloudRecognizing, setIsCloudRecognizing] = useState(false);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -717,6 +776,7 @@ export function SpeakingLab({
     if (isUploading || recordings.length !== scene.turns.length) return;
     setIsUploading(true);
     setSubmission(null);
+    setUploadMessage('正在准备安全上传通道……');
     let round = 0;
     const dialogue = messages
       .map((message) => {
@@ -749,25 +809,33 @@ export function SpeakingLab({
       recordingConsent,
     };
     try {
-      let response: Response;
+      let submitted: Submission;
       if (apiMode === 'cloudbase') {
-        const audio = await Promise.all(
-          [...recordings]
-            .sort((a, b) => a.round - b.round)
-            .map(async (clip) => ({
-              round: clip.round,
-              type: clip.blob.type || 'audio/webm',
-              data: await blobToBase64(clip.blob),
-            })),
-        );
-        response = await fetch(apiUrl, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            action: 'submit',
-            payload: attemptPayload,
-            audio,
-          }),
+        const ordered = [...recordings].sort((a, b) => a.round - b.round);
+        const prepared = await postCloudJson<{
+          uploadId: string;
+          submitToken: string;
+          uploads: CloudUploadTicket[];
+        }>(apiUrl, {
+          action: 'prepareUpload',
+          payload: attemptPayload,
+          audio: ordered.map((clip) => ({
+            round: clip.round,
+            type: clip.blob.type || 'audio/wav',
+            bytes: clip.blob.size,
+          })),
+        });
+        for (let index = 0; index < ordered.length; index += 1) {
+          const ticket = prepared.uploads.find((item) => item.round === ordered[index].round);
+          if (!ticket) throw new Error(`第${ordered[index].round}轮录音缺少上传凭证，请重试。`);
+          setUploadMessage(`正在上传第 ${index + 1} / ${ordered.length} 轮录音……`);
+          await uploadCloudRecording(ticket, ordered[index].blob);
+        }
+        setUploadMessage('三段录音已上传，正在保存成绩……');
+        submitted = await postCloudJson<Submission>(apiUrl, {
+          action: 'confirmUpload',
+          uploadId: prepared.uploadId,
+          submitToken: prepared.submitToken,
         });
       } else {
         const form = new FormData();
@@ -777,14 +845,14 @@ export function SpeakingLab({
           .forEach((clip) =>
             form.append('audio', clip.blob, `round-${clip.round}.webm`),
           );
-        response = await fetch(apiUrl, { method: 'POST', body: form });
+        const response = await fetch(apiUrl, { method: 'POST', body: form });
+        submitted = (await response.json()) as Submission;
       }
-      const payload = (await response.json()) as Submission;
-      setSubmission(payload);
-    } catch {
+      setSubmission(submitted);
+    } catch (error) {
       setSubmission({
         ok: false,
-        error: '上传失败，请检查网络后重试。录音暂时仍保留在本页。',
+        error: `${error instanceof Error ? error.message : '上传失败，请检查网络后重试。'} 录音仍保留在本页。`,
       });
     } finally {
       setIsUploading(false);
@@ -1292,7 +1360,7 @@ export function SpeakingLab({
                   </p>
                   <audio
                     controls
-                    preload="none"
+                    preload="metadata"
                     src={clip.url}
                     className="w-full"
                   />
@@ -1305,21 +1373,21 @@ export function SpeakingLab({
               {isUploading ? (
                 <span className="inline-flex items-center gap-2">
                   <UploadCloud className="h-5 w-5" />{' '}
-                  正在上传对话、评分和三段录音……
+                  {uploadMessage}
                 </span>
               ) : submission?.ok ? (
                 '已同步给教师，老师可以查看文字、评分并回听录音。'
               ) : (
-                (submission?.error ?? '正在准备上传……')
+                (submission?.error ?? '三段录音已保留，请点击下方“上传给老师”。')
               )}
             </div>
             <div className="mt-5 flex flex-wrap justify-center gap-3">
-              {submission?.error && (
+              {!submission?.ok && !isUploading && (
                 <button
                   onClick={() => void submitResult()}
                   className="focus-ring rounded-xl bg-[#ea5a0b] px-5 py-3 font-bold text-white"
                 >
-                  重新上传
+                  {submission?.error ? '重新上传' : '上传给老师'}
                 </button>
               )}
               <button
