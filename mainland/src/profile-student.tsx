@@ -37,8 +37,10 @@ type FormState = {
   className: string;
   major: string;
   otherMajor: string;
-  gaokaoKnown: boolean;
-  gaokaoScore: string;
+  admissionType: 'gaokao' | 'single' | '';
+  entranceScoreKnown: boolean;
+  entranceScore: string;
+  entranceFullScore: string;
   skills: Record<SkillKey, number>;
   confidence: number;
   speakingAnxiety: number;
@@ -57,7 +59,7 @@ type FormState = {
 };
 
 const initialForm: FormState = {
-  studentName: '', className: '', major: '', otherMajor: '', gaokaoKnown: true, gaokaoScore: '',
+  studentName: '', className: '', major: '', otherMajor: '', admissionType: '', entranceScoreKnown: true, entranceScore: '', entranceFullScore: '150',
   skills: defaultSkills, confidence: 3, speakingAnxiety: 3, englishInterest: 3,
   weeklyTime: '', currentHabits: [], learningGoals: [], preferredActivities: [], difficulties: [],
   majorReasons: [], schoolReasons: [], careerPlan: '', semesterGoal: '', teacherMessage: '', deviceReady: '',
@@ -67,8 +69,8 @@ const habitOptions = ['背单词', '刷英语短视频', '听英文歌', '看英
 const goalOptions = ['通过英语应用能力B级', '提高口语交流', '看懂专业英语', '提升求职竞争力', '参加专升本考试', '为四六级做准备', '能听懂英文内容'];
 const activityOptions = ['情景对话', '游戏与竞赛', '视频学习', '小组任务', '歌曲或配音', '阅读故事', 'AI口语练习', '教师讲解与练习'];
 const difficultyOptions = ['词汇量不足', '听不清或听不懂', '不敢开口', '发音不准', '语法基础弱', '阅读速度慢', '写不出句子', '缺少学习方法', '容易放弃'];
-const majorReasonOptions = ['对专业感兴趣', '就业前景较好', '喜欢实践和技术', '家人或老师建议', '高考分数与录取匹配', '行业发展吸引我', '暂时没有明确原因'];
-const schoolReasonOptions = ['铁路特色鲜明', '就业口碑较好', '专业设置适合我', '学校地理位置合适', '家人或老师推荐', '校园环境与设施', '高考分数与录取匹配', '暂时没有明确原因'];
+const majorReasonOptions = ['对专业感兴趣', '就业前景较好', '喜欢实践和技术', '家人或老师建议', '高考/单招成绩与录取匹配', '行业发展吸引我', '暂时没有明确原因'];
+const schoolReasonOptions = ['铁路特色鲜明', '就业口碑较好', '专业设置适合我', '学校地理位置合适', '家人或老师推荐', '校园环境与设施', '高考/单招成绩与录取匹配', '暂时没有明确原因'];
 
 function ChoiceGroup({
   title,
@@ -129,7 +131,18 @@ export function ProfileStudent() {
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(DRAFT_KEY);
-      if (saved) setForm({ ...initialForm, ...(JSON.parse(saved) as Partial<FormState>) });
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<FormState> & { gaokaoKnown?: boolean; gaokaoScore?: string };
+        const isLegacyDraft = parsed.gaokaoKnown !== undefined || parsed.gaokaoScore !== undefined;
+        setForm({
+          ...initialForm,
+          ...parsed,
+          admissionType: parsed.admissionType || (isLegacyDraft ? 'gaokao' : ''),
+          entranceScoreKnown: parsed.entranceScoreKnown ?? parsed.gaokaoKnown ?? true,
+          entranceScore: parsed.entranceScore ?? parsed.gaokaoScore ?? '',
+          entranceFullScore: parsed.entranceFullScore || '150',
+        });
+      }
     } catch { /* ignore an invalid local draft */ }
   }, []);
 
@@ -139,12 +152,14 @@ export function ProfileStudent() {
 
   const progress = ((step + 1) / steps.length) * 100;
   const majorValue = form.major === '其他专业' ? form.otherMajor.trim() : form.major;
-  const scoreValue = Number(form.gaokaoScore);
+  const scoreValue = Number(form.entranceScore);
+  const fullScoreValue = form.admissionType === 'gaokao' ? 150 : Number(form.entranceFullScore);
+  const admissionLabel = form.admissionType === 'gaokao' ? '高考' : form.admissionType === 'single' ? '单招' : '';
   const answeredCount = useMemo(() => [
-    form.studentName, form.className, majorValue,
-    !form.gaokaoKnown || (Number.isFinite(scoreValue) && form.gaokaoScore !== ''),
+    form.studentName, form.className, majorValue, form.admissionType,
+    !form.entranceScoreKnown || (Number.isFinite(scoreValue) && form.entranceScore !== '' && Number.isFinite(fullScoreValue) && fullScoreValue > 0),
     form.weeklyTime, form.learningGoals.length, form.majorReasons.length, form.schoolReasons.length,
-  ].filter(Boolean).length, [form, majorValue, scoreValue]);
+  ].filter(Boolean).length, [form, fullScoreValue, majorValue, scoreValue]);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -153,7 +168,10 @@ export function ProfileStudent() {
   function validateStep() {
     if (step === 0) {
       if (!form.studentName.trim() || !form.className.trim() || !majorValue) return '请填写姓名、班级和专业。';
-      if (form.gaokaoKnown && (!Number.isFinite(scoreValue) || scoreValue < 0 || scoreValue > 150)) return '高考英语成绩请填写 0–150 分；如果不记得，可选择“不记得”。';
+      if (!form.admissionType) return '请选择你的入学方式：高考或单招。';
+      if (form.entranceScoreKnown && (form.entranceScore === '' || !Number.isFinite(scoreValue) || scoreValue < 0)) return `请填写${admissionLabel}英语得分；如果不记得，可选择“不记得”。`;
+      if (form.entranceScoreKnown && (!Number.isFinite(fullScoreValue) || fullScoreValue <= 0 || fullScoreValue > 1000)) return '英语科目满分请填写 1–1000 之间的数字。';
+      if (form.entranceScoreKnown && scoreValue > fullScoreValue) return '英语得分不能高于英语科目满分，请检查后再填写。';
     }
     if (step === 2 && (!form.majorReasons.length || !form.schoolReasons.length)) return '请选择择专业和择校原因（可以多选）。';
     if (step === 3 && (!form.weeklyTime || !form.learningGoals.length || !form.deviceReady)) return '请选择每周学习时间、学习目标和设备情况。';
@@ -178,7 +196,10 @@ export function ProfileStudent() {
         profileKey: getStudentProfileKey(),
         profile: {
           studentName: form.studentName.trim(), className: form.className.trim(), major: majorValue,
-          gaokaoKnown: form.gaokaoKnown, gaokaoScore: form.gaokaoKnown ? scoreValue : null,
+          admissionType: form.admissionType,
+          entranceScoreKnown: form.entranceScoreKnown,
+          entranceScore: form.entranceScoreKnown ? scoreValue : null,
+          entranceFullScore: form.entranceScoreKnown ? fullScoreValue : null,
           skills: form.skills, confidence: form.confidence, speakingAnxiety: form.speakingAnxiety,
           englishInterest: form.englishInterest, weeklyTime: form.weeklyTime, currentHabits: form.currentHabits,
           learningGoals: form.learningGoals, preferredActivities: form.preferredActivities, difficulties: form.difficulties,
@@ -204,7 +225,7 @@ export function ProfileStudent() {
         <p>July老师已经可以在教师端看到你的档案。以后重新打开本页面，也可以更新自己的目标和学习情况。</p>
         <div className="profile-summary-mini">
           <span><strong>{form.className}</strong><small>班级</small></span>
-          <span><strong>{form.gaokaoKnown ? `${form.gaokaoScore}分` : '未填写'}</strong><small>高考英语</small></span>
+          <span><strong>{form.entranceScoreKnown ? `${admissionLabel} ${form.entranceScore}/${fullScoreValue}分` : `${admissionLabel} · 未填写`}</strong><small>入学英语</small></span>
           <span><strong>{form.learningGoals.length}项</strong><small>学习目标</small></span>
         </div>
         <button type="button" className="primary-button" onClick={() => { setSubmitted(false); setStep(0); }}>更新我的档案</button>
@@ -255,7 +276,29 @@ export function ProfileStudent() {
                 </div>
                 <label className="text-field"><span>专业 *</span><select value={form.major} onChange={(event) => update('major', event.target.value)}><option value="">请选择专业</option>{MAJOR_OPTIONS.map((option) => <option key={option}>{option}</option>)}</select></label>
                 {form.major === '其他专业' && <label className="text-field"><span>请填写专业名称 *</span><input value={form.otherMajor} onChange={(event) => update('otherMajor', event.target.value)} maxLength={60} placeholder="完整专业名称" /></label>}
-                <fieldset className="profile-fieldset"><legend>你的高考英语成绩是？</legend><div className="inline-options"><label><input type="radio" checked={form.gaokaoKnown} onChange={() => update('gaokaoKnown', true)} />记得</label><label><input type="radio" checked={!form.gaokaoKnown} onChange={() => update('gaokaoKnown', false)} />未参加或不记得</label></div>{form.gaokaoKnown && <label className="score-input"><input inputMode="numeric" type="number" min="0" max="150" value={form.gaokaoScore} onChange={(event) => update('gaokaoScore', event.target.value)} placeholder="例如：96" /><span>/ 150 分</span></label>}<p className="field-hint">只用于了解班级英语起点，不公开个人分数。</p></fieldset>
+                <fieldset className="profile-fieldset">
+                  <legend>你的入学方式是？ *</legend>
+                  <div className="inline-options">
+                    <label><input type="radio" name="admissionType" checked={form.admissionType === 'gaokao'} onChange={() => setForm((current) => ({ ...current, admissionType: 'gaokao', entranceFullScore: '150' }))} />高考</label>
+                    <label><input type="radio" name="admissionType" checked={form.admissionType === 'single'} onChange={() => setForm((current) => ({ ...current, admissionType: 'single', entranceFullScore: current.admissionType === 'single' ? current.entranceFullScore : '' }))} />单招</label>
+                  </div>
+                </fieldset>
+                {form.admissionType && <fieldset className="profile-fieldset">
+                  <legend>你的{admissionLabel}英语成绩是？</legend>
+                  <div className="inline-options">
+                    <label><input type="radio" name="entranceScoreKnown" checked={form.entranceScoreKnown} onChange={() => update('entranceScoreKnown', true)} />记得</label>
+                    <label><input type="radio" name="entranceScoreKnown" checked={!form.entranceScoreKnown} onChange={() => update('entranceScoreKnown', false)} />不记得</label>
+                  </div>
+                  {form.entranceScoreKnown && (form.admissionType === 'gaokao' ? (
+                    <label className="score-input"><input inputMode="decimal" type="number" min="0" max="150" step="0.5" value={form.entranceScore} onChange={(event) => update('entranceScore', event.target.value)} placeholder="例如：96" /><span>/ 150 分</span></label>
+                  ) : (
+                    <div className="two-columns">
+                      <label className="text-field"><span>英语得分</span><input inputMode="decimal" type="number" min="0" max="1000" step="0.5" value={form.entranceScore} onChange={(event) => update('entranceScore', event.target.value)} placeholder="例如：82" /></label>
+                      <label className="text-field"><span>英语科目满分</span><input inputMode="decimal" type="number" min="1" max="1000" step="0.5" value={form.entranceFullScore} onChange={(event) => update('entranceFullScore', event.target.value)} placeholder="例如：100" /></label>
+                    </div>
+                  ))}
+                  <p className="field-hint">只用于了解班级英语起点，不公开个人分数。单招分值不同，请同时填写英语科目满分。</p>
+                </fieldset>}
               </div>
             )}
 

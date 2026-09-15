@@ -45,6 +45,24 @@ function isNeedsSupport(row: EnglishProfile) {
   return row.confidence <= 2 || row.speaking_anxiety >= 4 || skillKeys.filter((key) => row.skills[key] <= 2).length >= 2;
 }
 
+function entranceScoreInfo(row: EnglishProfile) {
+  const type = row.admission_type === 'single' ? 'single' : 'gaokao';
+  const typeLabel = type === 'single' ? '单招' : '高考';
+  const known = row.entrance_score_known ?? row.gaokao_known ?? false;
+  const score = row.entrance_english_score ?? row.gaokao_score ?? null;
+  const fullScore = row.entrance_english_full_score ?? (known && type === 'gaokao' ? 150 : null);
+  const rate = known && score !== null && fullScore ? (Number(score) / Number(fullScore)) * 100 : null;
+  return {
+    type,
+    typeLabel,
+    known: Boolean(known && score !== null && fullScore),
+    score: score === null ? null : Number(score),
+    fullScore: fullScore === null ? null : Number(fullScore),
+    rate,
+    text: known && score !== null && fullScore ? `${typeLabel} ${score}/${fullScore}分` : `${typeLabel} · 未填写`,
+  };
+}
+
 function Metric({ icon, value, label, note }: { icon: React.ReactNode; value: string | number; label: string; note: string }) {
   return <article className="dashboard-metric"><span>{icon}</span><div><strong>{value}</strong><p>{label}</p><small>{note}</small></div></article>;
 }
@@ -81,6 +99,7 @@ export function ProfileTeacher() {
   const [keyword, setKeyword] = useState('');
   const [classFilter, setClassFilter] = useState('');
   const [majorFilter, setMajorFilter] = useState('');
+  const [admissionFilter, setAdmissionFilter] = useState('');
   const [supportOnly, setSupportOnly] = useState(false);
   const [selected, setSelected] = useState<EnglishProfile | null>(null);
 
@@ -107,12 +126,14 @@ export function ProfileTeacher() {
   const classes = useMemo(() => [...new Set(rows.map((row) => row.class_name))].sort((a, b) => a.localeCompare(b, 'zh-CN')), [rows]);
   const majors = useMemo(() => [...new Set(rows.map((row) => row.major))].sort((a, b) => a.localeCompare(b, 'zh-CN')), [rows]);
   const filtered = useMemo(() => rows.filter((row) => {
-    const searchable = normalize(`${row.student_name}${row.class_name}${row.major}`);
-    return (!keyword || searchable.includes(normalize(keyword))) && (!classFilter || row.class_name === classFilter) && (!majorFilter || row.major === majorFilter) && (!supportOnly || isNeedsSupport(row));
-  }), [classFilter, keyword, majorFilter, rows, supportOnly]);
+    const scoreInfo = entranceScoreInfo(row);
+    const searchable = normalize(`${row.student_name}${row.class_name}${row.major}${scoreInfo.typeLabel}`);
+    return (!keyword || searchable.includes(normalize(keyword))) && (!classFilter || row.class_name === classFilter) && (!majorFilter || row.major === majorFilter) && (!admissionFilter || scoreInfo.type === admissionFilter) && (!supportOnly || isNeedsSupport(row));
+  }), [admissionFilter, classFilter, keyword, majorFilter, rows, supportOnly]);
 
-  const knownScores = filtered.filter((row) => row.gaokao_known && row.gaokao_score !== null).map((row) => Number(row.gaokao_score));
-  const averageScore = avg(knownScores);
+  const scoreInfos = filtered.map(entranceScoreInfo);
+  const knownScoreRates = scoreInfos.filter((item) => item.known && item.rate !== null).map((item) => Number(item.rate));
+  const averageScoreRate = avg(knownScoreRates);
   const skillAverages = Object.fromEntries(skillKeys.map((key) => [key, avg(filtered.map((row) => Number(row.skills[key] || 0))) ])) as Record<SkillKey, number>;
   const overallSkill = avg(skillKeys.map((key) => skillAverages[key]));
   const supportCount = filtered.filter(isNeedsSupport).length;
@@ -120,18 +141,18 @@ export function ProfileTeacher() {
   const majorReasonCounts = counter(filtered.map((row) => row.major_reasons)).slice(0, 6);
   const schoolReasonCounts = counter(filtered.map((row) => row.school_reasons)).slice(0, 6);
   const scoreBands: [string, number][] = [
-    ['120–150分', knownScores.filter((value) => value >= 120).length],
-    ['90–119分', knownScores.filter((value) => value >= 90 && value < 120).length],
-    ['60–89分', knownScores.filter((value) => value >= 60 && value < 90).length],
-    ['0–59分', knownScores.filter((value) => value < 60).length],
-    ['未填写', filtered.length - knownScores.length],
+    ['80%–100%', knownScoreRates.filter((value) => value >= 80).length],
+    ['60%–79%', knownScoreRates.filter((value) => value >= 60 && value < 80).length],
+    ['40%–59%', knownScoreRates.filter((value) => value >= 40 && value < 60).length],
+    ['0%–39%', knownScoreRates.filter((value) => value < 40).length],
+    ['未填写', filtered.length - knownScoreRates.length],
   ];
 
   const classStats = useMemo(() => classes.map((className) => {
     const members = rows.filter((row) => row.class_name === className);
-    const scores = members.filter((row) => row.gaokao_known && row.gaokao_score !== null).map((row) => Number(row.gaokao_score));
+    const scores = members.map(entranceScoreInfo).filter((item) => item.known && item.rate !== null).map((item) => Number(item.rate));
     const skills = members.flatMap((row) => skillKeys.map((key) => Number(row.skills[key] || 0)));
-    return { className, count: members.length, averageScore: avg(scores), knownCount: scores.length, skillAverage: avg(skills), support: members.filter(isNeedsSupport).length };
+    return { className, count: members.length, averageScoreRate: avg(scores), knownCount: scores.length, skillAverage: avg(skills), support: members.filter(isNeedsSupport).length };
   }).sort((a, b) => b.count - a.count), [classes, rows]);
 
   async function logout() {
@@ -142,8 +163,11 @@ export function ProfileTeacher() {
 
   function exportCsv() {
     const cell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-    const headers = ['提交时间', '姓名', '班级', '专业', '高考英语', ...skillKeys.map((key) => `${SKILL_LABELS[key]}/5`), '学习信心/5', '口语紧张/5', '英语兴趣/5', '每周课外时间', '学习习惯', '困难', '学习目标', '喜欢的活动', '择专业原因', '择校原因', '毕业计划', '本学期目标', '给老师的话', '设备情况'];
-    const lines = filtered.map((row) => [dateText(row.updated_at), row.student_name, row.class_name, row.major, row.gaokao_known ? row.gaokao_score : '未填写', ...skillKeys.map((key) => row.skills[key]), row.confidence, row.speaking_anxiety, row.english_interest, row.weekly_time, row.current_habits.join('；'), row.difficulties.join('；'), row.learning_goals.join('；'), row.preferred_activities.join('；'), row.major_reasons.join('；'), row.school_reasons.join('；'), row.career_plan, row.semester_goal, row.teacher_message, row.device_ready].map(cell).join(','));
+    const headers = ['提交时间', '姓名', '班级', '专业', '入学方式', '英语得分', '英语满分', '英语得分率', ...skillKeys.map((key) => `${SKILL_LABELS[key]}/5`), '学习信心/5', '口语紧张/5', '英语兴趣/5', '每周课外时间', '学习习惯', '困难', '学习目标', '喜欢的活动', '择专业原因', '择校原因', '毕业计划', '本学期目标', '给老师的话', '设备情况'];
+    const lines = filtered.map((row) => {
+      const scoreInfo = entranceScoreInfo(row);
+      return [dateText(row.updated_at), row.student_name, row.class_name, row.major, scoreInfo.typeLabel, scoreInfo.known ? scoreInfo.score : '未填写', scoreInfo.known ? scoreInfo.fullScore : '未填写', scoreInfo.rate === null ? '未填写' : `${scoreInfo.rate.toFixed(1)}%`, ...skillKeys.map((key) => row.skills[key]), row.confidence, row.speaking_anxiety, row.english_interest, row.weekly_time, row.current_habits.join('；'), row.difficulties.join('；'), row.learning_goals.join('；'), row.preferred_activities.join('；'), row.major_reasons.join('；'), row.school_reasons.join('；'), row.career_plan, row.semester_goal, row.teacher_message, row.device_ready].map(cell).join(',');
+    });
     const blob = new Blob([`\uFEFF${[headers.map(cell).join(','), ...lines].join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `July-英语学习档案-${new Date().toISOString().slice(0, 10)}.csv`; anchor.click(); URL.revokeObjectURL(url);
   }
@@ -169,6 +193,7 @@ export function ProfileTeacher() {
           <label className="search-control"><Search /><input type="search" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索姓名、班级或专业" />{keyword && <button type="button" onClick={() => setKeyword('')} aria-label="清除搜索"><X /></button>}</label>
           <select value={classFilter} onChange={(event) => setClassFilter(event.target.value)}><option value="">全部班级</option>{classes.map((value) => <option key={value}>{value}</option>)}</select>
           <select value={majorFilter} onChange={(event) => setMajorFilter(event.target.value)}><option value="">全部专业</option>{majors.map((value) => <option key={value}>{value}</option>)}</select>
+          <select value={admissionFilter} onChange={(event) => setAdmissionFilter(event.target.value)}><option value="">全部入学方式</option><option value="gaokao">高考</option><option value="single">单招</option></select>
           <label className={`support-toggle ${supportOnly ? 'active' : ''}`}><input type="checkbox" checked={supportOnly} onChange={(event) => setSupportOnly(event.target.checked)} />只看需要关注</label>
           <span>显示 {filtered.length} / {rows.length} 人</span>
         </section>
@@ -178,7 +203,7 @@ export function ProfileTeacher() {
           <>
             <section className="metrics-grid">
               <Metric icon={<Users />} value={filtered.length} label="学生档案" note={`${new Set(filtered.map((row) => row.class_name)).size}个班级`} />
-              <Metric icon={<GraduationCap />} value={knownScores.length ? `${averageScore.toFixed(1)}分` : '—'} label="高考英语均分" note={`${knownScores.length}人填写成绩`} />
+              <Metric icon={<GraduationCap />} value={knownScoreRates.length ? `${averageScoreRate.toFixed(1)}%` : '—'} label="入学英语平均得分率" note={`${knownScoreRates.length}人填写高考/单招成绩`} />
               <Metric icon={<BarChart3 />} value={filtered.length ? `${overallSkill.toFixed(1)}/5` : '—'} label="英语技能自评" note="七项技能平均值" />
               <Metric icon={<BookOpen />} value={supportCount} label="建议重点关注" note="低信心、较紧张或多项薄弱" />
             </section>
@@ -188,7 +213,7 @@ export function ProfileTeacher() {
                 <div className="panel-title"><div><p className="eyebrow">SKILL PORTRAIT</p><h3>班级英语技能画像</h3></div><span>满分5分</span></div>
                 <div className="skill-bars">{skillKeys.map((key) => <div key={key}><label><span>{SKILL_LABELS[key]}</span><strong>{skillAverages[key].toFixed(1)}</strong></label><div><span style={{ width: `${(skillAverages[key] / 5) * 100}%` }} /></div></div>)}</div>
               </section>
-              <Distribution title="高考英语分数段" items={scoreBands} total={filtered.length} />
+              <Distribution title="高考/单招英语得分率" items={scoreBands} total={filtered.length} />
             </section>
 
             <section className="dashboard-grid three">
@@ -199,7 +224,7 @@ export function ProfileTeacher() {
 
             <section className="dashboard-panel class-panel">
               <div className="panel-title"><div><p className="eyebrow">CLASS VIEW</p><h3>按班级实时统计</h3></div><span>{classStats.length}个班级</span></div>
-              <div className="table-wrap"><table><thead><tr><th>班级</th><th>档案人数</th><th>高考英语均分</th><th>成绩填写率</th><th>技能自评</th><th>建议关注</th><th></th></tr></thead><tbody>{classStats.map((item) => <tr key={item.className}><td><strong>{item.className}</strong></td><td>{item.count}人</td><td>{item.knownCount ? `${item.averageScore.toFixed(1)}分` : '—'}</td><td>{percent(item.knownCount, item.count)}%</td><td>{item.skillAverage.toFixed(1)} / 5</td><td><span className={item.support ? 'risk-badge' : 'ok-badge'}>{item.support}人</span></td><td><button type="button" className="table-action" onClick={() => { setClassFilter(item.className); document.getElementById('student-profiles')?.scrollIntoView({ behavior: 'smooth' }); }}>查看学生</button></td></tr>)}</tbody></table></div>
+              <div className="table-wrap"><table><thead><tr><th>班级</th><th>档案人数</th><th>英语平均得分率</th><th>成绩填写率</th><th>技能自评</th><th>建议关注</th><th></th></tr></thead><tbody>{classStats.map((item) => <tr key={item.className}><td><strong>{item.className}</strong></td><td>{item.count}人</td><td>{item.knownCount ? `${item.averageScoreRate.toFixed(1)}%` : '—'}</td><td>{percent(item.knownCount, item.count)}%</td><td>{item.skillAverage.toFixed(1)} / 5</td><td><span className={item.support ? 'risk-badge' : 'ok-badge'}>{item.support}人</span></td><td><button type="button" className="table-action" onClick={() => { setClassFilter(item.className); document.getElementById('student-profiles')?.scrollIntoView({ behavior: 'smooth' }); }}>查看学生</button></td></tr>)}</tbody></table></div>
             </section>
 
             <section className="dashboard-panel profiles-panel" id="student-profiles">
@@ -208,7 +233,7 @@ export function ProfileTeacher() {
                 <article key={row.id} className="student-profile-row">
                   <span className="avatar">{row.student_name.slice(0, 1)}</span>
                   <div className="student-main"><strong>{row.student_name}</strong><p>{row.class_name} · {row.major}</p></div>
-                  <div><small>高考英语</small><strong>{row.gaokao_known ? `${row.gaokao_score}分` : '未填写'}</strong></div>
+                  <div><small>入学英语</small><strong>{entranceScoreInfo(row).text}</strong></div>
                   <div><small>技能自评</small><strong>{avg(skillKeys.map((key) => row.skills[key])).toFixed(1)} / 5</strong></div>
                   <div><small>学习目标</small><p className="tag-line">{row.learning_goals.slice(0, 2).join(' · ') || '未填写'}</p></div>
                   <span className={isNeedsSupport(row) ? 'risk-badge' : 'ok-badge'}>{isNeedsSupport(row) ? '建议关注' : '状态良好'}</span>
@@ -224,7 +249,7 @@ export function ProfileTeacher() {
         <section className="profile-modal" role="dialog" aria-modal="true" aria-label={`${selected.student_name}的英语学习档案`} onMouseDown={(event) => event.stopPropagation()}>
           <header><div><p className="eyebrow">STUDENT PROFILE</p><h2>{selected.student_name}</h2><span>{selected.class_name} · {selected.major}</span></div><button type="button" onClick={() => setSelected(null)} aria-label="关闭档案"><X /></button></header>
           <div className="modal-content">
-            <section className="profile-overview-cards"><div><small>高考英语</small><strong>{selected.gaokao_known ? `${selected.gaokao_score}分` : '未填写'}</strong></div><div><small>学习信心</small><strong>{selected.confidence} / 5</strong></div><div><small>口语紧张</small><strong>{selected.speaking_anxiety} / 5</strong></div><div><small>英语兴趣</small><strong>{selected.english_interest} / 5</strong></div></section>
+            <section className="profile-overview-cards"><div><small>入学英语</small><strong>{entranceScoreInfo(selected).text}</strong></div><div><small>学习信心</small><strong>{selected.confidence} / 5</strong></div><div><small>口语紧张</small><strong>{selected.speaking_anxiety} / 5</strong></div><div><small>英语兴趣</small><strong>{selected.english_interest} / 5</strong></div></section>
             <section className="modal-block"><h3>七项技能自评</h3><div className="modal-skills">{skillKeys.map((key) => <div key={key}><span>{SKILL_LABELS[key]}</span><strong>{selected.skills[key]} / 5</strong></div>)}</div></section>
             <section className="modal-two"><div className="modal-block"><h3>主要困难</h3><div className="tag-cloud">{selected.difficulties.length ? selected.difficulties.map((value) => <span key={value}>{value}</span>) : <em>未填写</em>}</div></div><div className="modal-block"><h3>学习目标</h3><div className="tag-cloud green">{selected.learning_goals.map((value) => <span key={value}>{value}</span>)}</div></div></section>
             <section className="modal-two"><div className="modal-block"><h3>选择专业的原因</h3><p>{selected.major_reasons.join('、')}</p></div><div className="modal-block"><h3>选择学校的原因</h3><p>{selected.school_reasons.join('、')}</p></div></section>

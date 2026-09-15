@@ -71,8 +71,13 @@ export type EnglishProfile = {
   student_name: string;
   class_name: string;
   major: string;
-  gaokao_known: boolean;
-  gaokao_score: number | null;
+  admission_type?: 'gaokao' | 'single';
+  entrance_score_known?: boolean;
+  entrance_english_score?: number | null;
+  entrance_english_full_score?: number | null;
+  entrance_english_percent?: number | null;
+  gaokao_known?: boolean;
+  gaokao_score?: number | null;
   skills: Record<SkillKey, number>;
   confidence: number;
   speaking_anxiety: number;

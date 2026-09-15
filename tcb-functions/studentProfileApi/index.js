@@ -61,6 +61,11 @@ function cleanInt(value, min, max, fallback = min) {
   return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
 }
 
+function cleanScore(value, min, max) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= min && number <= max ? Math.round(number * 10) / 10 : null;
+}
+
 function cleanArray(value, maxItems = 12, maxText = 80) {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.map((item) => cleanText(item, maxText)).filter(Boolean))].slice(0, maxItems);
@@ -143,16 +148,31 @@ function sanitizeProfile(raw) {
   const studentName = cleanText(raw?.studentName, 30);
   const className = cleanText(raw?.className, 50);
   const major = cleanText(raw?.major, 60);
-  const gaokaoKnown = raw?.gaokaoKnown === true;
-  const scoreNumber = Number(raw?.gaokaoScore);
-  const gaokaoScore = gaokaoKnown && Number.isFinite(scoreNumber) ? cleanInt(scoreNumber, 0, 150, 0) : null;
+  const legacyRequest = raw?.gaokaoKnown !== undefined || raw?.gaokaoScore !== undefined;
+  const admissionType = raw?.admissionType === 'single' || raw?.admissionType === 'gaokao' ? raw.admissionType : legacyRequest ? 'gaokao' : '';
+  const entranceScoreKnown = raw?.entranceScoreKnown === true || (raw?.entranceScoreKnown === undefined && raw?.gaokaoKnown === true);
+  const rawScore = raw?.entranceScore ?? raw?.gaokaoScore;
+  const rawFullScore = raw?.entranceFullScore ?? (admissionType === 'gaokao' ? 150 : null);
+  const entranceEnglishScore = entranceScoreKnown ? cleanScore(rawScore, 0, 1000) : null;
+  const entranceEnglishFullScore = entranceScoreKnown ? cleanScore(rawFullScore, 1, 1000) : null;
+  const entranceScoreValid = !entranceScoreKnown || (entranceEnglishScore !== null && entranceEnglishFullScore !== null && entranceEnglishScore <= entranceEnglishFullScore);
+  const entranceEnglishPercent = entranceScoreValid && entranceScoreKnown
+    ? Math.round((entranceEnglishScore / entranceEnglishFullScore) * 1000) / 10
+    : null;
   const skills = Object.fromEntries(SKILLS.map((key) => [key, cleanInt(raw?.skills?.[key], 1, 5, 3)]));
   return {
     student_name: studentName,
     class_name: className,
     major,
-    gaokao_known: gaokaoKnown,
-    gaokao_score: gaokaoScore,
+    admission_type: admissionType,
+    entrance_score_known: entranceScoreKnown,
+    entrance_english_score: entranceScoreValid ? entranceEnglishScore : null,
+    entrance_english_full_score: entranceScoreValid ? entranceEnglishFullScore : null,
+    entrance_english_percent: entranceScoreValid ? entranceEnglishPercent : null,
+    entrance_score_valid: entranceScoreValid,
+    // Keep legacy fields so older teacher pages and previously cached student pages remain compatible.
+    gaokao_known: admissionType === 'gaokao' && entranceScoreKnown && entranceScoreValid,
+    gaokao_score: admissionType === 'gaokao' && entranceScoreKnown && entranceScoreValid ? entranceEnglishScore : null,
     skills,
     confidence: cleanInt(raw?.confidence, 1, 5, 3),
     speaking_anxiety: cleanInt(raw?.speakingAnxiety, 1, 5, 3),
@@ -173,11 +193,29 @@ function sanitizeProfile(raw) {
 
 function publicProfile(row) {
   const parse = (value, fallback) => { try { return JSON.parse(value); } catch { return fallback; } };
+  const admissionType = row.admission_type === 'single' ? 'single' : 'gaokao';
+  const entranceScoreKnown = row.entrance_score_known === undefined
+    ? row.gaokao_known === true
+    : row.entrance_score_known === true;
+  const entranceEnglishScore = row.entrance_english_score == null
+    ? (row.gaokao_score == null ? null : Number(row.gaokao_score))
+    : Number(row.entrance_english_score);
+  const entranceEnglishFullScore = row.entrance_english_full_score == null
+    ? (entranceScoreKnown && admissionType === 'gaokao' ? 150 : null)
+    : Number(row.entrance_english_full_score);
+  const entranceEnglishPercent = entranceScoreKnown && entranceEnglishScore !== null && entranceEnglishFullScore
+    ? Math.round((entranceEnglishScore / entranceEnglishFullScore) * 1000) / 10
+    : null;
   return {
     id: row.id,
     student_name: row.student_name,
     class_name: row.class_name,
     major: row.major,
+    admission_type: admissionType,
+    entrance_score_known: entranceScoreKnown,
+    entrance_english_score: entranceEnglishScore,
+    entrance_english_full_score: entranceEnglishFullScore,
+    entrance_english_percent: entranceEnglishPercent,
     gaokao_known: row.gaokao_known === true,
     gaokao_score: row.gaokao_score == null ? null : Number(row.gaokao_score),
     skills: parse(row.skills_json || '{}', {}),
@@ -203,7 +241,7 @@ function publicProfile(row) {
 async function handleSubmit(event, body) {
   if (!(await rateLimit(event, 'profile-submit', 20))) return response(event, 429, { ok: false, error: '提交次数较多，请稍后再试。' });
   const profile = sanitizeProfile(body.profile || {});
-  if (!profile.student_name || !profile.class_name || !profile.major || !profile.weekly_time || !profile.learning_goals.length || !profile.major_reasons.length || !profile.school_reasons.length || !profile.device_ready) {
+  if (!profile.student_name || !profile.class_name || !profile.major || !profile.admission_type || !profile.entrance_score_valid || !profile.weekly_time || !profile.learning_goals.length || !profile.major_reasons.length || !profile.school_reasons.length || !profile.device_ready) {
     return response(event, 400, { ok: false, error: '还有必填问题未完成，请检查后再提交。' });
   }
   const id = `profile-${sha256(`${normalizeIdentity(profile.class_name)}|${normalizeIdentity(profile.student_name)}`).slice(0, 48)}`;
@@ -229,6 +267,7 @@ async function handleSubmit(event, body) {
   delete row.difficulties;
   delete row.major_reasons;
   delete row.school_reasons;
+  delete row.entrance_score_valid;
   await db.collection(PROFILES).doc(id).set(row);
   return response(event, 200, { ok: true, id, profileKey: id.slice(8) });
 }
