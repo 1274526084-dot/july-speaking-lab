@@ -69,7 +69,7 @@ export function TeacherWorkbenchLogin() {
           <span className="mx-auto grid h-16 w-16 place-items-center rounded-3xl bg-[#416b36] text-white shadow-lg"><LockKeyhole className="h-8 w-8" /></span>
           <p className="mt-5 text-xs font-black tracking-[.18em] text-[#d8520c]">JULY ENGLISH DATA CENTER</p>
           <h1 className="serif mt-2 text-3xl font-bold">教师统一登录</h1>
-          <p className="mt-3 leading-7 text-[#687168]">登录一次，直接打开学情、单词和口语三个数据端。</p>
+          <p className="mt-3 leading-7 text-[#687168]">登录一次，分别查看学期主线数据和各单元活动数据。</p>
         </div>
         <form onSubmit={submit} className="space-y-5 px-7 py-7">
           <label className="grid gap-2 text-sm font-bold"><span>教师账号</span><span className="relative block"><UserRound className="pointer-events-none absolute left-4 top-1/2 z-10 h-5 w-5 -translate-y-1/2 text-[#7c857b]" /><select value={code} onChange={(event) => setCode(event.target.value)} className="focus-ring h-13 w-full appearance-none rounded-2xl border border-[#d9c4b2] bg-[#fffaf6] pl-12 pr-4"><option value="cherie">Cherie</option><option value="lisa">Lisa</option><option value="alice">Alice</option><option value="july">July</option></select></span></label>
@@ -84,16 +84,16 @@ export function TeacherWorkbenchLogin() {
 }
 
 const dataLinks = [
-  { title: '综合英语画像', description: '查看学情档案、班级统计，以及由档案30%、单词30%、口语40%形成的成长指数。', href: profilePath('teacher'), icon: UsersRound, color: 'bg-[#e95a0d]', julyOnly: true },
-  { title: '单词跟读数据', description: '查看教师任务、学生跟读记录、系统评分、自评结果和每条录音。', href: wordPath('teacher'), icon: Headphones, color: 'bg-[#514bcf]' },
-  { title: '校园情景口语数据', description: '按班级检索学生的场景对话、识别文字、评分与完整录音。', href: sitePath('teacher'), icon: MessageCircleMore, color: 'bg-[#416b36]' },
+  { title: '综合英语画像', description: '学期数据：查看学生起点、学习目标、班级统计及持续更新的综合成长画像。', href: profilePath('teacher'), icon: UsersRound, color: 'bg-[#e95a0d]', julyOnly: true },
+  { title: '每课单词跟读数据', description: '学期数据：按教师、单元和班级查看每课跟读记录、系统评分、自评及录音。', href: wordPath('teacher'), icon: Headphones, color: 'bg-[#514bcf]' },
+  { title: 'Unit 1 · 校园情景口语', description: '单元数据：按班级查看第一课情景对话、识别文字、评分与完整录音。', href: sitePath('teacher'), icon: MessageCircleMore, color: 'bg-[#416b36]' },
 ];
 
 const studentLinks = [
   { title: '学生统一学习平台', href: sitePath(), note: '三个学生入口总览' },
   { title: '学生学情调查', href: profilePath(), note: '建立英语学习档案' },
-  { title: '学生单词跟读', href: wordPath(), note: '需教师发布的单元链接或代码' },
-  { title: '学生情景口语', href: sitePath('student'), note: '四个校园场景' },
+  { title: '学生每课单词跟读', href: wordPath(), note: '贯穿学期，需教师发布对应单元' },
+  { title: 'Unit 1 学生情景口语', href: sitePath('student'), note: '第一课四个校园场景' },
 ];
 
 export function TeacherWorkbench() {
@@ -121,16 +121,27 @@ export function TeacherWorkbench() {
   return (
     <main className="min-h-screen bg-[#f7f5f1] text-[#29342a]">
       <header className="border-b border-[#e2d7cd] bg-white px-5 py-5 sm:px-8">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-5"><div><p className="text-xs font-black tracking-[.16em] text-[#d9520d]">JULY ENGLISH DATA CENTER</p><h1 className="serif mt-1 text-2xl font-bold sm:text-3xl">教师课堂数据中心</h1><p className="mt-1 text-sm text-[#6b746b]">{teacherName}老师 · 三类数据独立保存、统一查看</p></div><button type="button" onClick={logout} className="focus-ring inline-flex items-center gap-2 rounded-xl border border-[#d7c9bd] px-4 py-2.5 font-bold text-[#657064]"><LogOut className="h-5 w-5" /><span className="hidden sm:inline">退出</span></button></div>
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-5"><div><p className="text-xs font-black tracking-[.16em] text-[#d9520d]">JULY ENGLISH DATA CENTER</p><h1 className="serif mt-1 text-2xl font-bold sm:text-3xl">教师课堂数据中心</h1><p className="mt-1 text-sm text-[#6b746b]">{teacherName}老师 · 学期主线与单元活动分区查看</p></div><button type="button" onClick={logout} className="focus-ring inline-flex items-center gap-2 rounded-xl border border-[#d7c9bd] px-4 py-2.5 font-bold text-[#657064]"><LogOut className="h-5 w-5" /><span className="hidden sm:inline">退出</span></button></div>
       </header>
       <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 sm:py-10">
-        <section className="rounded-[28px] bg-gradient-to-r from-[#374f36] to-[#587b47] p-6 text-white shadow-xl shadow-green-950/10 sm:flex sm:items-center sm:justify-between sm:p-8"><div><div className="flex items-center gap-2 text-sm font-bold text-green-100"><BarChart3 className="h-5 w-5" />上课电脑快捷入口</div><h2 className="mt-2 text-2xl font-black sm:text-3xl">点击下方卡片，直接查看学生数据</h2><p className="mt-3 max-w-3xl leading-7 text-green-50/85">综合画像只读取单词与口语结果，不改变两个练习网页和原始数据。学生必须在三个模块填写相同姓名与班级才能自动匹配。</p></div><BookOpenCheck className="mt-6 h-16 w-16 shrink-0 text-green-100/70 sm:mt-0" /></section>
+        <section className="rounded-[28px] bg-gradient-to-r from-[#374f36] to-[#587b47] p-6 text-white shadow-xl shadow-green-950/10 sm:flex sm:items-center sm:justify-between sm:p-8"><div><div className="flex items-center gap-2 text-sm font-bold text-green-100"><BarChart3 className="h-5 w-5" />上课电脑快捷入口</div><h2 className="mt-2 text-2xl font-black sm:text-3xl">学期数据在前，当前单元活动在后</h2><p className="mt-3 max-w-3xl leading-7 text-green-50/85">学情档案与每课单词跟读贯穿全学期；校园情景口语归入 Unit 1。综合画像只读各模块结果，不改变练习网页和原始记录。</p></div><BookOpenCheck className="mt-6 h-16 w-16 shrink-0 text-green-100/70 sm:mt-0" /></section>
 
-        <section className="mt-8 grid gap-5 lg:grid-cols-3">
-          {dataLinks.map(({ title, description, href, icon: Icon, color, julyOnly }) => {
-            const unavailable = Boolean(julyOnly && teacherName.toLowerCase() !== 'july');
-            return <a key={title} href={unavailable ? undefined : href} aria-disabled={unavailable} className={`group flex min-h-[245px] flex-col rounded-[26px] border border-[#e2d5ca] bg-white p-6 shadow-sm transition ${unavailable ? 'cursor-not-allowed opacity-55' : 'hover:-translate-y-1 hover:shadow-lg'}`}><div className="flex items-start justify-between"><span className={`grid h-13 w-13 place-items-center rounded-2xl ${color} text-white`}><Icon className="h-6 w-6" /></span><ExternalLink className="h-5 w-5 text-[#9b9f99] transition group-hover:translate-x-1" /></div><h3 className="mt-6 text-xl font-black">{title}</h3><p className="mt-3 flex-1 leading-7 text-[#697269]">{description}</p><strong className="mt-4 inline-flex items-center gap-2 text-[#d9520d]">{unavailable ? '仅July账号可查看' : '点击进入'}<ArrowRight className="h-4 w-4" /></strong></a>;
-          })}
+        <section className="mt-9">
+          <div className="mb-4"><p className="text-xs font-black tracking-[.16em] text-[#d9520d]">01 · SEMESTER DATA</p><h2 className="mt-1 text-2xl font-black">学期主线数据</h2></div>
+          <div className="grid gap-5 lg:grid-cols-2">
+            {dataLinks.slice(0, 2).map(({ title, description, href, icon: Icon, color, julyOnly }) => {
+              const unavailable = Boolean(julyOnly && teacherName.toLowerCase() !== 'july');
+              return <a key={title} href={unavailable ? undefined : href} aria-disabled={unavailable} className={`group flex min-h-[225px] flex-col rounded-[26px] border border-[#e2d5ca] bg-white p-6 shadow-sm transition ${unavailable ? 'cursor-not-allowed opacity-55' : 'hover:-translate-y-1 hover:shadow-lg'}`}><div className="flex items-start justify-between"><span className={`grid h-13 w-13 place-items-center rounded-2xl ${color} text-white`}><Icon className="h-6 w-6" /></span><ExternalLink className="h-5 w-5 text-[#9b9f99] transition group-hover:translate-x-1" /></div><h3 className="mt-6 text-xl font-black">{title}</h3><p className="mt-3 flex-1 leading-7 text-[#697269]">{description}</p><strong className="mt-4 inline-flex items-center gap-2 text-[#d9520d]">{unavailable ? '仅July账号可查看' : '点击进入'}<ArrowRight className="h-4 w-4" /></strong></a>;
+            })}
+          </div>
+        </section>
+
+        <section className="mt-10">
+          <div className="mb-4"><p className="text-xs font-black tracking-[.16em] text-[#514bcf]">02 · UNIT DATA</p><h2 className="mt-1 text-2xl font-black">分单元活动数据</h2></div>
+          <div className="grid gap-5 lg:grid-cols-3">
+            {dataLinks.slice(2).map(({ title, description, href, icon: Icon, color }) => <a key={title} href={href} className="group flex min-h-[225px] flex-col rounded-[26px] border border-[#e2d5ca] bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-lg"><div className="flex items-start justify-between"><span className={`grid h-13 w-13 place-items-center rounded-2xl ${color} text-white`}><Icon className="h-6 w-6" /></span><ExternalLink className="h-5 w-5 text-[#9b9f99] transition group-hover:translate-x-1" /></div><h3 className="mt-6 text-xl font-black">{title}</h3><p className="mt-3 flex-1 leading-7 text-[#697269]">{description}</p><strong className="mt-4 inline-flex items-center gap-2 text-[#d9520d]">点击进入<ArrowRight className="h-4 w-4" /></strong></a>)}
+            {['Unit 2', 'Unit 3'].map((unit) => <article key={unit} className="flex min-h-[225px] flex-col rounded-[26px] border border-dashed border-[#d8cec5] bg-white/55 p-6 text-[#777e77]"><span className="grid h-13 w-13 place-items-center rounded-2xl bg-[#ece9e6]"><LockKeyhole className="h-6 w-6" /></span><h3 className="mt-6 text-xl font-black text-[#5d655e]">{unit} · 待发布</h3><p className="mt-3 leading-7">后续课程活动及对应教师数据入口将在这里增加。</p></article>)}
+          </div>
         </section>
 
         <section className="mt-10 rounded-[28px] border border-[#e2d6cc] bg-white p-6 sm:p-8">

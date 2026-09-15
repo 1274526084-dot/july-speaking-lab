@@ -234,7 +234,7 @@ export function ProfileTeacher() {
             <section className="metrics-grid">
               <Metric icon={<Users />} value={filtered.length} label="学生档案" note={`${new Set(filtered.map((row) => row.class_name)).size}个班级`} />
               <Metric icon={<GraduationCap />} value={knownScoreRates.length ? `${averageScoreRate.toFixed(1)}%` : '—'} label="入学英语平均得分率" note={`${knownScoreRates.length}人填写高考/单招成绩`} />
-              <Metric icon={<BarChart3 />} value={filtered.length ? `${compositeAverage.toFixed(1)}/100` : '—'} label="综合成长指数" note="档案30% · 单词30% · 口语40%" />
+              <Metric icon={<BarChart3 />} value={filtered.length ? `${compositeAverage.toFixed(1)}/100` : '—'} label="综合成长指数" note="档案30% · 单词30% · 单元实践40%" />
               <Metric icon={<BookOpen />} value={supportCount} label="建议重点关注" note="低信心、较紧张或多项薄弱" />
             </section>
 
@@ -279,8 +279,8 @@ export function ProfileTeacher() {
         <section className="profile-modal" role="dialog" aria-modal="true" aria-label={`${selected.student_name}的英语学习档案`} onMouseDown={(event) => event.stopPropagation()}>
           <header><div><p className="eyebrow">STUDENT PROFILE</p><h2>{selected.student_name}</h2><span>{selected.class_name} · {profileCollege(selected)} · {selected.major}</span></div><button type="button" onClick={() => setSelected(null)} aria-label="关闭档案"><X /></button></header>
           <div className="modal-content">
-            <section className="profile-overview-cards"><div><small>综合成长指数</small><strong>{compositeInfo(selected).score.toFixed(1)} / 100</strong></div><div><small>单词跟读</small><strong>{compositeInfo(selected).word ? `${compositeInfo(selected).word?.average_score}分 · ${compositeInfo(selected).word?.attempts}次` : '待完成'}</strong></div><div><small>情景口语</small><strong>{compositeInfo(selected).speaking ? `${compositeInfo(selected).speaking?.average_score}分 · ${compositeInfo(selected).speaking?.attempts}次` : '待完成'}</strong></div><div><small>入学英语</small><strong>{entranceScoreInfo(selected).text}</strong></div></section>
-            <section className="modal-block"><h3>画像说明</h3><p>综合成长指数按学习档案30%、单词跟读30%、情景口语40%计算；未完成的模块暂不计入权重。本指数用于教师反馈与个性化支持，不作为课程成绩。</p></section>
+            <section className="profile-overview-cards"><div><small>综合成长指数</small><strong>{compositeInfo(selected).score.toFixed(1)} / 100</strong></div><div><small>学期单词跟读</small><strong>{compositeInfo(selected).word ? `${compositeInfo(selected).word?.average_score}分 · ${compositeInfo(selected).word?.attempts}次` : '待完成'}</strong></div><div><small>Unit 1 情景口语</small><strong>{compositeInfo(selected).speaking ? `${compositeInfo(selected).speaking?.average_score}分 · ${compositeInfo(selected).speaking?.attempts}次` : '待完成'}</strong></div><div><small>入学英语</small><strong>{entranceScoreInfo(selected).text}</strong></div></section>
+            <section className="modal-block"><h3>画像说明</h3><p>当前综合成长指数按学习档案30%、学期单词跟读30%、单元实践40%计算；现阶段单元实践数据来自Unit 1校园情景口语，后续可随课程加入新的单元活动。未完成模块暂不计入权重。本指数用于教师反馈与个性化支持，不作为课程成绩。</p></section>
             <section className="modal-block"><h3>七项技能自评</h3><div className="modal-skills">{skillKeys.map((key) => <div key={key}><span>{SKILL_LABELS[key]}</span><strong>{selected.skills[key]} / 5</strong></div>)}</div></section>
             <section className="modal-two"><div className="modal-block"><h3>主要困难</h3><div className="tag-cloud">{selected.difficulties.length ? selected.difficulties.map((value) => <span key={value}>{value}</span>) : <em>未填写</em>}</div></div><div className="modal-block"><h3>学习目标</h3><div className="tag-cloud green">{selected.learning_goals.map((value) => <span key={value}>{value}</span>)}</div></div></section>
             <section className="modal-two"><div className="modal-block"><h3>选择专业的原因</h3><p>{selected.major_reasons.join('、')}</p></div><div className="modal-block"><h3>选择学校的原因</h3><p>{selected.school_reasons.join('、')}</p></div></section>
