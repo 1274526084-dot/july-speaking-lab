@@ -150,4 +150,15 @@ export type EnglishProfile = {
   device_ready: string;
   submitted_at: number;
   updated_at: number;
+  activity_summary?: {
+    word?: ActivitySummary | null;
+    speaking?: ActivitySummary | null;
+  };
+};
+
+export type ActivitySummary = {
+  attempts: number;
+  average_score: number;
+  best_score: number;
+  last_submitted_at: number;
 };

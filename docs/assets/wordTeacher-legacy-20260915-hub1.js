@@ -1,0 +1,1 @@
+System.register(["./chunks/jsx-runtime-legacy-20260915-hub1.js","./chunks/word-main-legacy-20260915-hub1.js"],function(n,e){return{setters:[function(n){},function(n){}],execute:function(){}}});

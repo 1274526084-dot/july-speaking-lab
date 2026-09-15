@@ -7,7 +7,7 @@ import { defineConfig } from 'vite';
 
 const projectDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.join(projectDir, 'mainland');
-const releaseId = '20260915-profile2';
+const releaseId = '20260915-hub1';
 
 export default defineConfig({
   root: webRoot,
@@ -55,6 +55,8 @@ export default defineConfig({
         profileStudent: path.join(webRoot, 'profile', 'index.html'),
         profileTeacher: path.join(webRoot, 'profile', 'teacher', 'index.html'),
         profileTeacherLogin: path.join(webRoot, 'profile', 'teacher', 'login', 'index.html'),
+        workbench: path.join(webRoot, 'workbench', 'index.html'),
+        workbenchLogin: path.join(webRoot, 'workbench', 'login', 'index.html'),
       },
     },
   },

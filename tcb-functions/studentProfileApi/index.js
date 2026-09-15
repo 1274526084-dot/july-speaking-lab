@@ -6,6 +6,8 @@ const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
 const db = app.database();
 
 const PROFILES = 'english_learning_profiles';
+const WORD_ATTEMPTS = 'word_attempts';
+const SPEAKING_ATTEMPTS = 'speaking_attempts';
 const SESSIONS = 'english_profile_sessions';
 const RATES = 'english_profile_rates';
 const SESSION_MS = 8 * 60 * 60 * 1000;
@@ -142,6 +144,44 @@ async function validSession(token) {
 
 function normalizeIdentity(value) {
   return cleanText(value, 80).toLocaleLowerCase('zh-CN').replace(/[\s_-]+/g, '');
+}
+
+function identityKey(row) {
+  return `${normalizeIdentity(row?.class_name)}|${normalizeIdentity(row?.student_name)}`;
+}
+
+async function readCollection(name, limit = 1000) {
+  try {
+    const result = await db.collection(name).limit(limit).get();
+    return Array.isArray(result.data) ? result.data : [];
+  } catch (error) {
+    console.warn(`Unable to read ${name}`, error?.message || error);
+    return [];
+  }
+}
+
+function summarizeAttempts(rows, scoreField) {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const key = identityKey(row);
+    const score = Number(row?.[scoreField]);
+    if (!key || key === '|' || !Number.isFinite(score)) return;
+    const current = grouped.get(key) || { scores: [], last_submitted_at: 0 };
+    current.scores.push(Math.max(0, Math.min(100, score)));
+    current.last_submitted_at = Math.max(current.last_submitted_at, Number(row.submitted_at || 0));
+    grouped.set(key, current);
+  });
+  const summaries = new Map();
+  grouped.forEach((value, key) => {
+    const total = value.scores.reduce((sum, score) => sum + score, 0);
+    summaries.set(key, {
+      attempts: value.scores.length,
+      average_score: Math.round((total / value.scores.length) * 10) / 10,
+      best_score: Math.round(Math.max(...value.scores) * 10) / 10,
+      last_submitted_at: value.last_submitted_at,
+    });
+  });
+  return summaries;
 }
 
 function sanitizeProfile(raw) {
@@ -288,8 +328,27 @@ async function handleLogin(event, body) {
 async function handleList(event, body) {
   const session = await validSession(body.token);
   if (!session) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
-  const result = await db.collection(PROFILES).orderBy('updated_at', 'desc').limit(1000).get();
-  const rows = Array.isArray(result.data) ? result.data.map(publicProfile) : [];
+  const [result, wordRows, speakingRows] = await Promise.all([
+    db.collection(PROFILES).orderBy('updated_at', 'desc').limit(1000).get(),
+    readCollection(WORD_ATTEMPTS, 1000),
+    readCollection(SPEAKING_ATTEMPTS, 1000),
+  ]);
+  const wordSummaries = summarizeAttempts(
+    wordRows.filter((row) => row.status === 'completed'),
+    'average_score',
+  );
+  const speakingSummaries = summarizeAttempts(speakingRows, 'total_score');
+  const rows = Array.isArray(result.data) ? result.data.map((raw) => {
+    const profile = publicProfile(raw);
+    const key = identityKey(profile);
+    return {
+      ...profile,
+      activity_summary: {
+        word: wordSummaries.get(key) || null,
+        speaking: speakingSummaries.get(key) || null,
+      },
+    };
+  }) : [];
   return response(event, 200, { ok: true, rows, updatedAt: Date.now() });
 }
 
