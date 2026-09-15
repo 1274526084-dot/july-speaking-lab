@@ -8,6 +8,8 @@ const db = app.database();
 const PROFILES = 'english_learning_profiles';
 const WORD_ATTEMPTS = 'word_attempts';
 const SPEAKING_ATTEMPTS = 'speaking_attempts';
+const PROJECT_ID = 'lzrtc-public-english-2026';
+const DATA_REGION = 'china-cn';
 const SESSIONS = 'english_profile_sessions';
 const RATES = 'english_profile_rates';
 const SESSION_MS = 8 * 60 * 60 * 1000;
@@ -150,6 +152,32 @@ function identityKey(row) {
   return `${normalizeIdentity(row?.class_name)}|${normalizeIdentity(row?.student_name)}`;
 }
 
+function projectTagged(row) {
+  return cleanText(row?.project_id, 80) === PROJECT_ID;
+}
+
+function legacyDomesticProfile(row) {
+  if (row?.project_id) return false;
+  const admission = cleanText(row?.admission_type, 20);
+  return Boolean(
+    row?.student_name
+    && row?.class_name
+    && row?.major
+    && (admission === 'gaokao' || admission === 'single' || row?.gaokao_known !== undefined)
+    && !/malaysia|malaysian|马来西亚/i.test(`${row?.country || ''}${row?.region || ''}${row?.source || ''}`),
+  );
+}
+
+function legacyWordAttempt(row) {
+  if (row?.project_id) return false;
+  return Boolean(row?.unit_id && row?.student_name && row?.class_name && row?.status === 'completed');
+}
+
+function legacySpeakingAttempt(row) {
+  if (row?.project_id) return false;
+  return Boolean(row?.scene_id && row?.student_id && row?.student_name && row?.class_name);
+}
+
 async function readCollection(name, limit = 1000) {
   try {
     const result = await db.collection(name).limit(limit).get();
@@ -287,10 +315,14 @@ async function handleSubmit(event, body) {
   if (!profile.student_name || !profile.class_name || !profile.major || !profile.admission_type || !profile.entrance_score_valid || !profile.weekly_time || !profile.learning_goals.length || !profile.major_reasons.length || !profile.school_reasons.length || !profile.device_ready) {
     return response(event, 400, { ok: false, error: '还有必填问题未完成，请检查后再提交。' });
   }
-  const id = `profile-${sha256(`${normalizeIdentity(profile.class_name)}|${normalizeIdentity(profile.student_name)}`).slice(0, 48)}`;
+  const id = `profile-${sha256(`${PROJECT_ID}|${normalizeIdentity(profile.class_name)}|${normalizeIdentity(profile.student_name)}`).slice(0, 48)}`;
   const now = Date.now(); const existing = await getDocument(PROFILES, id);
   const row = {
     id,
+    project_id: PROJECT_ID,
+    data_region: DATA_REGION,
+    module_id: 'semester-profile',
+    schema_version: 2,
     ...profile,
     skills_json: JSON.stringify(profile.skills),
     current_habits_json: JSON.stringify(profile.current_habits),
@@ -334,11 +366,23 @@ async function handleList(event, body) {
     readCollection(SPEAKING_ATTEMPTS, 1000),
   ]);
   const wordSummaries = summarizeAttempts(
-    wordRows.filter((row) => row.status === 'completed'),
+    wordRows.filter((row) => row.status === 'completed' && (projectTagged(row) || legacyWordAttempt(row))),
     'average_score',
   );
-  const speakingSummaries = summarizeAttempts(speakingRows, 'total_score');
-  const rows = Array.isArray(result.data) ? result.data.map((raw) => {
+  const speakingSummaries = summarizeAttempts(
+    speakingRows.filter((row) => projectTagged(row) || legacySpeakingAttempt(row)),
+    'total_score',
+  );
+  const sourceRows = Array.isArray(result.data)
+    ? result.data.filter((row) => projectTagged(row) || legacyDomesticProfile(row))
+    : [];
+  const uniqueProfiles = new Map();
+  sourceRows.forEach((row) => {
+    const key = identityKey(row);
+    const current = uniqueProfiles.get(key);
+    if (!current || projectTagged(row) || Number(row.updated_at || 0) > Number(current.updated_at || 0)) uniqueProfiles.set(key, row);
+  });
+  const rows = [...uniqueProfiles.values()].map((raw) => {
     const profile = publicProfile(raw);
     const key = identityKey(profile);
     return {
@@ -348,8 +392,9 @@ async function handleList(event, body) {
         speaking: speakingSummaries.get(key) || null,
       },
     };
-  }) : [];
-  return response(event, 200, { ok: true, rows, updatedAt: Date.now() });
+  });
+  rows.sort((left, right) => Number(right.updated_at || 0) - Number(left.updated_at || 0));
+  return response(event, 200, { ok: true, projectId: PROJECT_ID, rows, updatedAt: Date.now() });
 }
 
 exports.main = async (event) => {

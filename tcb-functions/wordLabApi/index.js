@@ -10,6 +10,8 @@ const _ = db.command;
 const TEACHERS = 'word_teachers';
 const UNITS = 'word_units';
 const ATTEMPTS = 'word_attempts';
+const PROJECT_ID = 'lzrtc-public-english-2026';
+const DATA_REGION = 'china-cn';
 const SESSIONS = 'word_sessions';
 const RATES = 'word_rates';
 const RECOGNITION_CHUNKS = 'word_recognition_chunks';
@@ -60,6 +62,14 @@ function parseBody(event) {
 
 function cleanText(value, max = 120) {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+function belongsToProject(row) {
+  if (row?.project_id) return cleanText(row.project_id, 80) === PROJECT_ID;
+  if (/malaysia|malaysian|马来西亚/i.test(`${row?.country || ''}${row?.region || ''}${row?.source || ''}`)) return false;
+  const legacyUnit = row?.teacher_id && row?.share_code && typeof row?.words_json === 'string';
+  const legacyAttempt = row?.unit_id && row?.student_name && row?.class_name && typeof row?.results_json === 'string';
+  return Boolean(legacyUnit || legacyAttempt);
 }
 
 function cleanCode(value) {
@@ -423,7 +433,7 @@ async function handleTeacherListUnits(event, body) {
   if (!session) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
   const teacherId = session.role === 'admin' ? cleanText(body.teacherId, 64) : session.teacher_id;
   if (!teacherId) return response(event, 400, { ok: false, error: '请选择教师。' });
-  const result = await queryRows(UNITS, { teacher_id: teacherId }, 200);
+  const result = (await queryRows(UNITS, { teacher_id: teacherId }, 200)).filter(belongsToProject);
   const parsedWords = result.map((unit) => cleanWords(parseJson(unit.words_json || '[]', [])));
   const urls = await temporaryUrlMap(parsedWords.flatMap((words) => words.flatMap(audioIdsForWord)));
   const rows = result.map((unit, index) => {
@@ -437,7 +447,7 @@ async function handleTeacherListUnits(event, body) {
 async function handleTeacherListSharedUnits(event, body) {
   const session = await validSession(body.token, ['teacher']);
   if (!session) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
-  const result = await queryRows(UNITS, { status: 'published' }, 300);
+  const result = (await queryRows(UNITS, { status: 'published' }, 300)).filter(belongsToProject);
   const rows = result.map((unit) => {
     const words = cleanWords(parseJson(unit.words_json || '[]', []));
     return {
@@ -455,7 +465,7 @@ async function handleTeacherGetSharedUnit(event, body) {
   const session = await validSession(body.token, ['teacher']);
   if (!session) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
   const unit = await getDocument(UNITS, cleanText(body.unitId, 80));
-  if (!unit || unit.status !== 'published') return response(event, 404, { ok: false, error: '共享任务不存在或尚未发布。' });
+  if (!unit || !belongsToProject(unit) || unit.status !== 'published') return response(event, 404, { ok: false, error: '共享任务不存在或尚未发布。' });
   const words = cleanWords(parseJson(unit.words_json || '[]', []));
   const urls = await temporaryUrlMap(words.flatMap(audioIdsForWord));
   const hydratedWords = words.map((word) => hydrateWordAudio(word, urls));
@@ -466,7 +476,7 @@ async function handleTeacherCloneUnit(event, body) {
   const session = await validSession(body.token, ['teacher']);
   if (!session) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
   const source = await getDocument(UNITS, cleanText(body.unitId, 80));
-  if (!source || source.status !== 'published') return response(event, 404, { ok: false, error: '共享任务不存在或尚未发布。' });
+  if (!source || !belongsToProject(source) || source.status !== 'published') return response(event, 404, { ok: false, error: '共享任务不存在或尚未发布。' });
   if (source.teacher_id === session.teacher_id) return response(event, 400, { ok: false, error: '这是您自己的任务，无需重复应用。' });
   const sourceWords = cleanWords(parseJson(source.words_json || '[]', []));
   if (!sourceWords.length || sourceWords.some((word) => !audioIdsForWord(word).length)) return response(event, 400, { ok: false, error: '原任务的发音资料不完整，暂时无法应用。' });
@@ -483,7 +493,7 @@ async function handleTeacherCloneUnit(event, body) {
         if (!audioResponse.ok) throw new Error(`无法复制 ${word.word} 的发音`);
         const buffer = Buffer.from(await audioResponse.arrayBuffer());
         if (!buffer.length || buffer.length > MAX_AUDIO_BYTES) throw new Error(`${word.word} 的发音文件无效`);
-        const cloudPath = `july-word-lab/shared-copy/${session.teacher_id}/${id}/${randomUUID()}.${extensionFor(word.audio_type || audioResponse.headers.get('content-type'))}`;
+        const cloudPath = `july-word-lab/${PROJECT_ID}/shared-copy/${session.teacher_id}/${id}/${randomUUID()}.${extensionFor(word.audio_type || audioResponse.headers.get('content-type'))}`;
         const upload = await app.uploadFile({ cloudPath, fileContent: buffer });
         if (!upload.fileID) throw new Error(`无法保存 ${word.word} 的发音`);
         copiedFiles.push(upload.fileID);
@@ -499,6 +509,7 @@ async function handleTeacherCloneUnit(event, body) {
     if (!shareCode) throw new Error('暂时无法生成单元代码');
     const now = Date.now();
     const record = {
+      project_id: PROJECT_ID, data_region: DATA_REGION, module_id: 'semester-word-practice', schema_version: 2,
       id, teacher_id: session.teacher_id, teacher_name: session.teacher_name,
       title: source.title, note: source.note || '', words_json: JSON.stringify(copiedWords),
       share_code: shareCode, status: 'draft', created_at: now, updated_at: now, published_at: null,
@@ -526,7 +537,7 @@ async function handleTeacherSaveUnit(event, body) {
   const now = Date.now();
   const id = cleanText(body.id, 64) || randomUUID();
   const existing = await getDocument(UNITS, id);
-  if (existing && existing.teacher_id !== session.teacher_id) return response(event, 403, { ok: false, error: '无权修改此单元。' });
+  if (existing && (!belongsToProject(existing) || existing.teacher_id !== session.teacher_id)) return response(event, 403, { ok: false, error: '无权修改此单元。' });
   let shareCode = existing?.share_code || '';
   if (!shareCode) {
     for (let tries = 0; tries < 8 && !shareCode; tries += 1) {
@@ -536,6 +547,7 @@ async function handleTeacherSaveUnit(event, body) {
   }
   if (!shareCode) return response(event, 500, { ok: false, error: '暂时无法生成单元代码，请重试。' });
   const record = {
+    project_id: PROJECT_ID, data_region: DATA_REGION, module_id: 'semester-word-practice', schema_version: 2,
     id, teacher_id: session.teacher_id, teacher_name: session.teacher_name,
     title, note, words_json: JSON.stringify(words), share_code: shareCode,
     status: existing?.status === 'published' ? 'draft' : (existing?.status || 'draft'),
@@ -561,7 +573,7 @@ async function handleTeacherSmartImport(event, body) {
   const now = Date.now();
   const id = cleanText(body.id, 64) || randomUUID();
   const existing = await getDocument(UNITS, id);
-  if (existing && existing.teacher_id !== session.teacher_id) return response(event, 403, { ok: false, error: '无权修改此单元。' });
+  if (existing && (!belongsToProject(existing) || existing.teacher_id !== session.teacher_id)) return response(event, 403, { ok: false, error: '无权修改此单元。' });
   const existingWords = cleanWords(parseJson(existing?.words_json || '[]', []));
   const existingMap = new Map(existingWords.map((word) => [word.word.toLowerCase(), word]));
   const lookups = await Promise.all(entries.map(async ({ term, meaning: meaningOverride }) => {
@@ -572,7 +584,7 @@ async function handleTeacherSmartImport(event, body) {
       const found = await lookupDictionaryTerm(term);
       for (let segmentIndex = 0; segmentIndex < found.segments.length; segmentIndex += 1) {
         const segment = found.segments[segmentIndex];
-        const cloudPath = `july-word-lab/dictionary/${session.teacher_id}/${id}/${sha256(`${term}-${segment.audioUrl}-${segmentIndex}`).slice(0, 20)}.${extensionFor(segment.audioType)}`;
+        const cloudPath = `july-word-lab/${PROJECT_ID}/dictionary/${session.teacher_id}/${id}/${sha256(`${term}-${segment.audioUrl}-${segmentIndex}`).slice(0, 20)}.${extensionFor(segment.audioType)}`;
         const upload = await app.uploadFile({ cloudPath, fileContent: segment.buffer });
         if (!upload.fileID) throw new Error('保存发音失败');
         uploadedFileIds.push(upload.fileID);
@@ -600,6 +612,7 @@ async function handleTeacherSmartImport(event, body) {
   }
   if (!shareCode) return response(event, 500, { ok: false, error: '暂时无法生成单元代码，请重试。' });
   const record = {
+    project_id: PROJECT_ID, data_region: DATA_REGION, module_id: 'semester-word-practice', schema_version: 2,
     id, teacher_id: session.teacher_id, teacher_name: session.teacher_name,
     title, note, words_json: JSON.stringify(words), share_code: shareCode,
     status: existing?.status === 'published' ? 'draft' : (existing?.status || 'draft'),
@@ -619,14 +632,14 @@ async function handleTeacherUploadReference(event, body) {
   const session = await validSession(body.token, ['teacher']);
   if (!session) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
   const unit = await getDocument(UNITS, cleanText(body.unitId, 64));
-  if (!unit || unit.teacher_id !== session.teacher_id) return response(event, 404, { ok: false, error: '没有找到这个单元。' });
+  if (!unit || !belongsToProject(unit) || unit.teacher_id !== session.teacher_id) return response(event, 404, { ok: false, error: '没有找到这个单元。' });
   const audio = decodeAudio(body.audio);
   if (!audio) return response(event, 400, { ok: false, error: '示范音频无效或超过2MB。' });
   const words = cleanWords(parseJson(unit.words_json || '[]', []));
   const wordIndex = words.findIndex((word) => word.id === cleanText(body.wordId, 64));
   if (wordIndex < 0) return response(event, 404, { ok: false, error: '没有找到这个单词。' });
   const oldFileIds = audioIdsForWord(words[wordIndex]);
-  const cloudPath = `july-word-lab/reference/${session.teacher_id}/${unit.id}/${words[wordIndex].id}-${Date.now()}.${extensionFor(audio.type)}`;
+  const cloudPath = `july-word-lab/${PROJECT_ID}/reference/${session.teacher_id}/${unit.id}/${words[wordIndex].id}-${Date.now()}.${extensionFor(audio.type)}`;
   const upload = await app.uploadFile({ cloudPath, fileContent: audio.buffer });
   if (!upload.fileID) return response(event, 500, { ok: false, error: '示范音频上传失败，请重试。' });
   words[wordIndex].audio_file_id = upload.fileID;
@@ -641,7 +654,7 @@ async function handleTeacherPublish(event, body) {
   const session = await validSession(body.token, ['teacher']);
   if (!session) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
   const unit = await getDocument(UNITS, cleanText(body.unitId, 64));
-  if (!unit || unit.teacher_id !== session.teacher_id) return response(event, 404, { ok: false, error: '没有找到这个单元。' });
+  if (!unit || !belongsToProject(unit) || unit.teacher_id !== session.teacher_id) return response(event, 404, { ok: false, error: '没有找到这个单元。' });
   const words = cleanWords(parseJson(unit.words_json || '[]', []));
   const missing = words.filter((word) => !audioIdsForWord(word).length).map((word) => word.word);
   if (missing.length) return response(event, 400, { ok: false, error: `这些单词还没有自动获取到词典发音，请检查拼写后重新智能添加：${missing.slice(0, 8).join('、')}${missing.length > 8 ? '等' : ''}` });
@@ -653,7 +666,7 @@ async function handleTeacherPublish(event, body) {
 async function handleStudentGetUnit(event, body) {
   const shareCode = cleanText(body.shareCode, 20).toUpperCase().replace(/[^A-Z0-9]/g, '');
   const unit = shareCode ? await findOne(UNITS, { share_code: shareCode, status: 'published' }) : null;
-  if (!unit) return response(event, 404, { ok: false, error: '没有找到已发布的单元，请检查链接或单元代码。' });
+  if (!unit || !belongsToProject(unit)) return response(event, 404, { ok: false, error: '没有找到已发布的单元，请检查链接或单元代码。' });
   const words = cleanWords(parseJson(unit.words_json || '[]', []));
   const urls = await temporaryUrlMap(words.flatMap(audioIdsForWord));
   return response(event, 200, { ok: true, unit: publicUnit(unit, urls) });
@@ -664,12 +677,13 @@ async function handleStudentStart(event, body) {
   const unit = await findOne(UNITS, { share_code: cleanText(body.shareCode, 20).toUpperCase(), status: 'published' });
   const studentName = cleanText(body.studentName, 40);
   const className = cleanText(body.className, 80);
-  if (!unit || !studentName || !className || body.recordingConsent !== true) {
+  if (!unit || !belongsToProject(unit) || !studentName || !className || body.recordingConsent !== true) {
     return response(event, 400, { ok: false, error: '请填写姓名和班级，并同意上传本次练习录音。' });
   }
   const id = randomUUID();
   const submitToken = randomBytes(24).toString('hex');
   await db.collection(ATTEMPTS).doc(id).set({
+    project_id: PROJECT_ID, data_region: DATA_REGION, module_id: 'semester-word-practice', schema_version: 2,
     id, unit_id: unit.id, unit_title: unit.title, teacher_id: unit.teacher_id, teacher_name: unit.teacher_name,
     student_name: studentName, class_name: className, status: 'practicing',
     results_json: '[]', submit_token_hash: sha256(submitToken), started_at: Date.now(), submitted_at: null,
@@ -735,7 +749,7 @@ function pronunciationAdvice(score, mode, referenceCompared) {
 async function studentAttempt(body) {
   const attempt = await getDocument(ATTEMPTS, cleanText(body.attemptId, 64));
   const token = cleanText(body.submitToken, 100);
-  if (!attempt || !token || !safeEqualHex(sha256(token), attempt.submit_token_hash)) return null;
+  if (!attempt || !belongsToProject(attempt) || !token || !safeEqualHex(sha256(token), attempt.submit_token_hash)) return null;
   return attempt;
 }
 
@@ -752,7 +766,7 @@ async function handleStudentPrepareWordUpload(event, body) {
   if (!word || !audioType.startsWith('audio/') || !audioBytes || audioBytes > MAX_AUDIO_BYTES) {
     return response(event, 400, { ok: false, error: '录音无效或超过2MB，请重新录制。' });
   }
-  const cloudPath = `july-word-lab/student/${attempt.teacher_id}/${attempt.unit_id}/${attempt.id}/${word.id}-${Date.now()}.${extensionFor(audioType)}`;
+  const cloudPath = `july-word-lab/${PROJECT_ID}/student/${attempt.teacher_id}/${attempt.unit_id}/${attempt.id}/${word.id}-${Date.now()}.${extensionFor(audioType)}`;
   const metadata = await app.getUploadMetadata({ cloudPath });
   const upload = metadata?.data || {};
   if (!upload.url || !upload.fileId || !upload.authorization || !upload.token || !upload.cosFileId) {
@@ -836,7 +850,7 @@ async function handleStudentSubmitWord(event, body) {
   const results = Array.isArray(parseJson(attempt.results_json || '[]', [])) ? parseJson(attempt.results_json || '[]', []) : [];
   const existing = results.find((item) => item.word_id === word.id);
   const oldFileId = existing?.audio_file_id || '';
-  const cloudPath = `july-word-lab/student/${attempt.teacher_id}/${attempt.unit_id}/${attempt.id}/${word.id}-${Date.now()}.${extensionFor(audio.type)}`;
+  const cloudPath = `july-word-lab/${PROJECT_ID}/student/${attempt.teacher_id}/${attempt.unit_id}/${attempt.id}/${word.id}-${Date.now()}.${extensionFor(audio.type)}`;
   const upload = await app.uploadFile({ cloudPath, fileContent: audio.buffer });
   if (!upload.fileID) return response(event, 500, { ok: false, error: '录音上传失败，请检查网络后重试。' });
   const next = {
@@ -881,9 +895,9 @@ async function handleListAttempts(event, body) {
   const session = await validSession(body.token, ['teacher', 'admin']);
   if (!session) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
   const where = { status: 'completed' };
-  const result = await queryRows(ATTEMPTS, where, 500);
+  const result = (await queryRows(ATTEMPTS, where, 500)).filter(belongsToProject);
   result.sort((left, right) => Number(right.submitted_at || 0) - Number(left.submitted_at || 0));
-  return response(event, 200, { ok: true, rows: await hydrateAttempts(result) });
+  return response(event, 200, { ok: true, projectId: PROJECT_ID, rows: await hydrateAttempts(result) });
 }
 
 async function handleAdminListTeachers(event, body) {
@@ -932,8 +946,8 @@ async function handleAdminDeleteUnit(event, body) {
   const session = await validSession(body.token, ['admin']);
   if (!session) return response(event, 401, { ok: false, error: '管理员登录已失效。' });
   const unit = await getDocument(UNITS, cleanText(body.unitId, 80));
-  if (!unit) return response(event, 404, { ok: false, error: '没有找到单元。' });
-  const attempts = await queryRows(ATTEMPTS, { unit_id: unit.id }, 1);
+  if (!unit || !belongsToProject(unit)) return response(event, 404, { ok: false, error: '没有找到单元。' });
+  const attempts = (await queryRows(ATTEMPTS, { unit_id: unit.id }, 5)).filter(belongsToProject);
   if (attempts.length) return response(event, 409, { ok: false, error: '已有学生数据的单元不能删除。' });
   const files = cleanWords(parseJson(unit.words_json || '[]', [])).flatMap(audioIdsForWord);
   await db.collection(UNITS).doc(unit.id).remove();

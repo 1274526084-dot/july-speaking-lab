@@ -13,6 +13,8 @@ const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
 const db = app.database();
 
 const ATTEMPTS = 'speaking_attempts';
+const PROJECT_ID = 'lzrtc-public-english-2026';
+const DATA_REGION = 'china-cn';
 const SESSIONS = 'speaking_sessions';
 const RATES = 'speaking_rates';
 const RECOGNITION_CHUNKS = 'speaking_recognition_chunks';
@@ -112,6 +114,17 @@ function parseBody(event) {
 
 function cleanText(value, max) {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+function belongsToProject(row) {
+  if (row?.project_id) return cleanText(row.project_id, 80) === PROJECT_ID;
+  return Boolean(
+    row?.scene_id
+    && row?.student_id
+    && row?.student_name
+    && row?.class_name
+    && !/malaysia|malaysian|马来西亚/i.test(`${row?.country || ''}${row?.region || ''}${row?.source || ''}`),
+  );
 }
 
 function cleanInt(value, min, max) {
@@ -534,6 +547,11 @@ function sanitizeAttemptPayload(payload) {
   const feedback = cleanText(payload.feedback, 1000);
   if (!studentName || !studentId || !className || !SCENES.has(sceneId) || !transcript) return null;
   return {
+    project_id: PROJECT_ID,
+    data_region: DATA_REGION,
+    module_id: 'unit-1-campus-speaking',
+    course_unit: 'unit-1',
+    schema_version: 2,
     student_name: studentName,
     student_id: studentId,
     class_name: className,
@@ -592,7 +610,7 @@ async function handlePrepareUpload(event, body) {
   const manifest = [];
   const uploads = [];
   for (const clip of audio) {
-    const cloudPath = `july-speaking-lab/audio/${date}/${id}/round-${clip.round}.${extensionFor(clip.type)}`;
+    const cloudPath = `july-speaking-lab/${PROJECT_ID}/audio/${date}/${id}/round-${clip.round}.${extensionFor(clip.type)}`;
     const metadata = await app.getUploadMetadata({ cloudPath });
     const upload = metadata?.data || {};
     if (!upload.url || !upload.fileId || !upload.authorization || !upload.token || !upload.cosFileId) {
@@ -724,7 +742,7 @@ async function handleSubmit(event, body) {
   const uploaded = [];
   try {
     for (const clip of decoded) {
-      const cloudPath = `july-speaking-lab/audio/${date}/${id}/round-${clip.round}.${extensionFor(clip.type)}`;
+      const cloudPath = `july-speaking-lab/${PROJECT_ID}/audio/${date}/${id}/round-${clip.round}.${extensionFor(clip.type)}`;
       const upload = await app.uploadFile({
         cloudPath,
         fileContent: clip.buffer,
@@ -741,6 +759,11 @@ async function handleSubmit(event, body) {
 
     const attempt = {
       id,
+      project_id: PROJECT_ID,
+      data_region: DATA_REGION,
+      module_id: 'unit-1-campus-speaking',
+      course_unit: 'unit-1',
+      schema_version: 2,
       student_name: studentName,
       student_id: studentId,
       class_name: className,
@@ -801,7 +824,7 @@ async function handleList(event, body) {
     .orderBy('submitted_at', 'desc')
     .limit(300)
     .get();
-  const rows = Array.isArray(result.data) ? result.data : [];
+  const rows = Array.isArray(result.data) ? result.data.filter(belongsToProject) : [];
   const fileIds = [];
   const manifests = rows.map((row) => {
     try {
@@ -825,6 +848,7 @@ async function handleList(event, body) {
   }));
   return response(event, 200, {
     ok: true,
+    projectId: PROJECT_ID,
     teacherName: session.teacher_name,
     rows: hydratedRows,
   });
