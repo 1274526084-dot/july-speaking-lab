@@ -59,6 +59,10 @@ export function LearningHub() {
           </a>
         </header>
 
+        <a href={sitePath('archive')} className="focus-ring mt-7 flex flex-col justify-between gap-5 rounded-[28px] border border-[#c6d7bd] bg-[#eaf2e3] p-6 sm:flex-row sm:items-center sm:p-8">
+          <div><p className="text-xs font-black tracking-[.14em] text-[#52724a]">MY RAILWAY ENGLISH PASSPORT</p><h2 className="mt-2 text-2xl font-black text-[#315637]">我的英语学习档案馆</h2><p className="mt-2 leading-7 text-[#677361]">七维自评雷达图 · 我的录音与作品 · 按课学习路径 · 铁路英语窗</p><p className="mt-1 text-sm text-[#7a8375]">免密码进入，换设备由老师核对一次；下方原有练习入口保持不变。</p></div><span className="inline-flex shrink-0 items-center gap-3 rounded-2xl bg-[#416b36] px-5 py-3 font-bold text-white">查看我的成长<ArrowRight className="h-5 w-5" /></span>
+        </a>
+
         <section className="grid items-center gap-8 px-2 pb-9 pt-12 lg:grid-cols-[1.08fr_.92fr] lg:px-8 lg:py-16">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full bg-[#fff0e4] px-4 py-2 text-sm font-bold text-[#d84f0b]"><Sparkles className="h-4 w-4" />一学期的英语成长记录</div>

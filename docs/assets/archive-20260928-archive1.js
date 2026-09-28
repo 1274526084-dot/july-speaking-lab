@@ -1,0 +1,1 @@
+import'data:text/javascript,"assets/archive-20260928-archive1.js";if(!import.meta.resolve)throw Error("import.meta.resolve not supported")';export function __vite_legacy_guard(){import.meta.url,import("_").catch(()=>1),async function*(){}().next()}import"./chunks/class-groups-20260928-archive1.js";import"./chunks/archive-main-20260928-archive1.js";

@@ -126,6 +126,8 @@ export function TeacherWorkbench() {
       <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 sm:py-10">
         <section className="rounded-[28px] bg-gradient-to-r from-[#374f36] to-[#587b47] p-6 text-white shadow-xl shadow-green-950/10 sm:flex sm:items-center sm:justify-between sm:p-8"><div><div className="flex items-center gap-2 text-sm font-bold text-green-100"><BarChart3 className="h-5 w-5" />上课电脑快捷入口</div><h2 className="mt-2 text-2xl font-black sm:text-3xl">学期数据在前，当前单元活动在后</h2><p className="mt-3 max-w-3xl leading-7 text-green-50/85">学情档案与每课单词跟读贯穿全学期；校园情景口语归入 Unit 1。综合画像只读各模块结果，不改变练习网页和原始记录。</p></div><BookOpenCheck className="mt-6 h-16 w-16 shrink-0 text-green-100/70 sm:mt-0" /></section>
 
+        <a href={sitePath('archive/teacher')} className="focus-ring mt-6 flex items-center gap-4 rounded-[24px] border border-[#d7ddc4] bg-[#eef1e1] p-5 text-[#254d3e] transition hover:bg-[#e6ebd7] sm:p-6"><span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#254d3e] text-white"><BookOpenCheck className="h-6 w-6" /></span><div className="flex-1"><strong className="block text-lg">英语成长档案 · 教师工作台</strong><span className="mt-1 block text-sm text-[#72816a]">汇总班级成长记录，发布学习任务，编辑铁路英语小测并确认学生设备。</span></div><ArrowRight className="h-5 w-5 shrink-0" /></a>
+
         <section className="mt-9">
           <div className="mb-4"><p className="text-xs font-black tracking-[.16em] text-[#d9520d]">01 · SEMESTER DATA</p><h2 className="mt-1 text-2xl font-black">学期主线数据</h2></div>
           <div className="grid gap-5 lg:grid-cols-2">

@@ -4,6 +4,15 @@
   "functionRoot": "./tcb-functions",
   "functions": [
     {
+      "name": "learningArchiveApi",
+      "runtime": "Nodejs20.19",
+      "handler": "index.main",
+      "timeout": 60,
+      "memorySize": 256,
+      "installDependency": true,
+      "ignore": ["node_modules/**", ".git/**", "test/**", "README.md"]
+    },
+    {
       "name": "speakingLabApi",
       "runtime": "Nodejs20.19",
       "handler": "index.main",
