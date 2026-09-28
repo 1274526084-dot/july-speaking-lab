@@ -12,6 +12,7 @@ import {
   Volume2,
 } from 'lucide-react';
 import { type SyntheticEvent, useEffect, useRef, useState } from 'react';
+import { StudentClassField } from '@/components/student-class-field';
 import {
   prepareAudioForUpload,
   type WordUnit,
@@ -620,16 +621,7 @@ export function WordStudent() {
                     placeholder="请输入真实姓名"
                   />
                 </label>
-                <label className="word-label">
-                  班级
-                  <input
-                    required
-                    value={className}
-                    onChange={(event) => setClassName(event.target.value)}
-                    className="word-input mt-2"
-                    placeholder="如：城轨信号2401"
-                  />
-                </label>
+                <StudentClassField required value={className} onChange={setClassName} theme="words" />
               </div>
               <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3.5 text-sm leading-6">
                 <input

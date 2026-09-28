@@ -11,6 +11,9 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { createClassDirectory } from '@/lib/class-groups';
+import { CLASS_CATALOG } from '@/lib/class-catalog';
+import { ClassGroupingNote } from '@/components/class-grouping-note';
 import {
   clearTeacherToken,
   cloudbaseRequest,
@@ -57,10 +60,6 @@ function parseAudio(value: string | null): AudioMeta[] {
   }
 }
 
-function normalizeKeyword(value: string) {
-  return value.toLocaleLowerCase('zh-CN').replace(/[\s_-]+/g, '');
-}
-
 function Metric({
   icon,
   value,
@@ -84,6 +83,7 @@ export function TeacherApp() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [classKeyword, setClassKeyword] = useState('');
+  const [classFilter, setClassFilter] = useState('');
   const [teacherName, setTeacherName] = useState('');
 
   useEffect(() => {
@@ -110,29 +110,16 @@ export function TeacherApp() {
       .finally(() => setLoading(false));
   }, []);
 
-  const normalizedKeyword = normalizeKeyword(classKeyword.trim());
-  const classGroups = useMemo(() => {
-    const counts = new Map<string, number>();
-    rows.forEach((row) =>
-      counts.set(row.class_name, (counts.get(row.class_name) ?? 0) + 1),
-    );
-    return [...counts.entries()].sort(([left], [right]) =>
-      left.localeCompare(right, 'zh-CN'),
-    );
-  }, [rows]);
+  const classDirectory = useMemo(() => createClassDirectory(rows, CLASS_CATALOG.map(class_name => ({ class_name }))), [rows]);
+  const classGroups = classDirectory.groups;
   const filteredRows = useMemo(
-    () =>
-      normalizedKeyword
-        ? rows.filter((row) =>
-            normalizeKeyword(row.class_name).includes(normalizedKeyword),
-          )
-        : rows,
-    [normalizedKeyword, rows],
+    () => rows.filter(row => (!classFilter || classDirectory.resolve(row).key === classFilter) && classDirectory.matches(row, classKeyword)),
+    [classFilter, classKeyword, classDirectory, rows],
   );
 
-  const scoredRows = rows.filter((row) => row.total_score !== null);
-  const studentCount = new Set(rows.map((row) => row.student_id)).size;
-  const recordingCount = rows.filter(
+  const scoredRows = filteredRows.filter((row) => row.total_score !== null);
+  const studentCount = new Set(filteredRows.map((row) => `${classDirectory.resolve(row).key}|${row.student_id || row.student_name}`)).size;
+  const recordingCount = filteredRows.filter(
     (row) => parseAudio(row.audio_manifest).length > 0,
   ).length;
   const averageScore = scoredRows.length
@@ -166,7 +153,8 @@ export function TeacherApp() {
       '提交时间',
       '姓名',
       '学号',
-      '班级',
+      '学生原填班级',
+      '统计班级',
       '场景',
       '任务信息/40',
       '句型使用/30',
@@ -179,7 +167,7 @@ export function TeacherApp() {
       '系统建议',
       '录音状态',
     ];
-    const lines = rows.map((row) =>
+    const lines = filteredRows.map((row) =>
       [
         new Date(row.submitted_at).toLocaleString('zh-CN', {
           timeZone: 'Asia/Shanghai',
@@ -187,6 +175,7 @@ export function TeacherApp() {
         row.student_name,
         row.student_id,
         row.class_name,
+        classDirectory.resolve(row).label,
         row.scene_title,
         row.task_score,
         row.sentence_score,
@@ -257,7 +246,7 @@ export function TeacherApp() {
           />
           <Metric
             icon={<MessageSquareText className="h-5 w-5 text-[#ea5a0b]" />}
-            value={rows.length}
+            value={filteredRows.length}
             label="练习记录"
           />
           <Metric
@@ -296,14 +285,14 @@ export function TeacherApp() {
                 <input
                   type="search"
                   value={classKeyword}
-                  onChange={(event) => setClassKeyword(event.target.value)}
-                  placeholder="输入班级关键词，如：城轨信号、2401、储能"
+                  onChange={(event) => { setClassKeyword(event.target.value); setClassFilter(''); }}
+                  placeholder="搜索班级，如：城轨信号54班、54班"
                   className="focus-ring h-12 w-full rounded-2xl border border-[#d9c4b2] bg-[#fffaf6] pl-11 pr-11 text-base text-[#332b25] placeholder:text-[#9a9189]"
                 />
                 {classKeyword && (
                   <button
                     type="button"
-                    onClick={() => setClassKeyword('')}
+                    onClick={() => { setClassKeyword(''); setClassFilter(''); }}
                     aria-label="清除班级筛选"
                     className="focus-ring absolute right-2.5 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full text-[#7b746c] hover:bg-[#f1e7de]"
                   >
@@ -317,28 +306,27 @@ export function TeacherApp() {
               >
                 <button
                   type="button"
-                  onClick={() => setClassKeyword('')}
-                  className={`focus-ring rounded-full border px-3 py-2 text-sm font-bold ${!classKeyword ? 'border-[#416b36] bg-[#416b36] text-white' : 'border-[#d8c5b5] bg-white text-[#655c54]'}`}
+                  onClick={() => { setClassKeyword(''); setClassFilter(''); }}
+                  className={`focus-ring rounded-full border px-3 py-2 text-sm font-bold ${!classKeyword && !classFilter ? 'border-[#416b36] bg-[#416b36] text-white' : 'border-[#d8c5b5] bg-white text-[#655c54]'}`}
                 >
                   全部 · {rows.length}
                 </button>
-                {classGroups.map(([className, count]) => {
-                  const active =
-                    normalizeKeyword(classKeyword) ===
-                    normalizeKeyword(className);
+                {classGroups.map((group) => {
+                  const active = classFilter === group.key;
                   return (
                     <button
-                      key={className}
+                      key={group.key}
                       type="button"
-                      onClick={() => setClassKeyword(className)}
+                      onClick={() => { setClassFilter(group.key); setClassKeyword(''); }}
                       className={`focus-ring rounded-full border px-3 py-2 text-sm font-bold ${active ? 'border-[#ea5a0b] bg-[#fff0e4] text-[#c94a07]' : 'border-[#d8c5b5] bg-white text-[#655c54]'}`}
                     >
-                      {className} · {count}
+                      {group.label} · {group.count}
                     </button>
                   );
                 })}
               </div>
             </div>
+            <ClassGroupingNote groups={classGroups} />
           </div>
 
           {loading && (
@@ -396,7 +384,7 @@ export function TeacherApp() {
                             {row.student_id}
                           </p>
                         </td>
-                        <td className="px-4 py-4">{row.class_name}</td>
+                        <td className="px-4 py-4"><strong>{classDirectory.resolve(row).label}</strong>{classDirectory.resolve(row).label !== row.class_name && <p className="mt-1 text-xs text-[#7a7168]">原填：{row.class_name}</p>}</td>
                         <td className="px-4 py-4 font-bold text-[#416b36]">
                           {row.scene_title}
                         </td>

@@ -1,0 +1,1 @@
+System.register(["./chunks/class-grouping-note-legacy-20260928-classes1.js","./chunks/profile-main-legacy-20260928-classes1.js"],function(s,e){return{setters:[function(s){},function(s){}],execute:function(){}}});

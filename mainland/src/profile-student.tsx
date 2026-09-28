@@ -12,6 +12,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { StudentClassField } from '@/components/student-class-field';
 import {
   COLLEGE_MAJOR_OPTIONS,
   COLLEGE_OPTIONS,
@@ -275,8 +276,8 @@ export function ProfileStudent() {
               <div className="form-section">
                 <div className="section-callout"><UserRound /><div><strong>先填写你的基本信息</strong><p>学生无需账号密码，姓名和班级用于老师筛选档案。</p></div></div>
                 <div className="two-columns">
-                  <label className="text-field"><span>姓名 *</span><input value={form.studentName} onChange={(event) => update('studentName', event.target.value)} maxLength={30} placeholder="请输入真实姓名" /></label>
-                  <label className="text-field"><span>班级 *</span><input value={form.className} onChange={(event) => update('className', event.target.value)} maxLength={50} placeholder="如：城轨信号2401" /></label>
+                  <label className="text-field" style={{ alignSelf: 'start' }}><span>姓名 *</span><input value={form.studentName} onChange={(event) => update('studentName', event.target.value)} maxLength={30} placeholder="请输入真实姓名" /></label>
+                  <StudentClassField required value={form.className} onChange={(value) => update('className', value)} theme="profile" />
                 </div>
                 <div className="two-columns">
                   <label className="text-field"><span>学院 *</span><select value={form.college} onChange={(event) => setForm((current) => ({ ...current, college: event.target.value, major: '', otherMajor: '' }))}><option value="">请先选择学院</option>{COLLEGE_OPTIONS.map((option) => <option key={option}>{option}</option>)}</select></label>

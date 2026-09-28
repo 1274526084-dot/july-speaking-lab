@@ -25,6 +25,9 @@ import {
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { type SyntheticEvent, useEffect, useMemo, useState } from 'react';
+import { createClassDirectory } from '@/lib/class-groups';
+import { CLASS_CATALOG } from '@/lib/class-catalog';
+import { ClassGroupingNote } from '@/components/class-grouping-note';
 import {
   clearWordSession,
   getWordRole,
@@ -232,9 +235,9 @@ function StaffHeader({
   );
 }
 
-function Metrics({ attempts }: { attempts: WordAttempt[] }) {
+function Metrics({ attempts, directory }: { attempts: WordAttempt[]; directory: ReturnType<typeof createClassDirectory> }) {
   const students = new Set(
-    attempts.map((row) => `${row.class_name}-${row.student_name}`),
+    attempts.map((row) => `${directory.resolve(row).key}-${row.student_name.trim()}`),
   ).size;
   const average = attempts.length
     ? Math.round(
@@ -280,6 +283,8 @@ function AttemptsTable({
   showTeacher?: boolean;
 }) {
   const [classKeyword, setClassKeyword] = useState('');
+  const [classFilter, setClassFilter] = useState('');
+  const directory = useMemo(() => createClassDirectory(rows, CLASS_CATALOG.map(class_name => ({ class_name }))), [rows]);
   const [unitFilter, setUnitFilter] = useState('');
   const [teacherFilter, setTeacherFilter] = useState('');
   const units = useMemo(
@@ -300,12 +305,12 @@ function AttemptsTable({
     () =>
       rows.filter(
         (row) =>
-          (!classKeyword ||
-            normalize(row.class_name).includes(normalize(classKeyword))) &&
+          directory.matches(row, classKeyword) &&
+          (!classFilter || directory.resolve(row).key === classFilter) &&
           (!unitFilter || row.unit_id === unitFilter) &&
           (!teacherFilter || row.teacher_id === teacherFilter),
       ),
-    [rows, classKeyword, unitFilter, teacherFilter],
+    [rows, classKeyword, classFilter, directory, unitFilter, teacherFilter],
   );
   function exportCsv() {
     const quote = (value: unknown) =>
@@ -314,7 +319,8 @@ function AttemptsTable({
       '教师',
       '单元',
       '姓名',
-      '班级',
+      '学生原填班级',
+      '统计班级',
       '系统平均分',
       '学生自评',
       '提交时间',
@@ -326,6 +332,7 @@ function AttemptsTable({
         row.unit_title,
         row.student_name,
         row.class_name,
+        directory.resolve(row).label,
         row.average_score,
         row.average_self,
         formatDate(row.submitted_at),
@@ -352,15 +359,15 @@ function AttemptsTable({
   }
   return (
     <section>
-      <div className="mb-4 grid gap-3 lg:grid-cols-[1fr_220px_220px_auto]">
+      <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_200px_180px_160px_auto]">
         <label className="relative">
           <span className="sr-only">按班级搜索</span>
           <Search className="pointer-events-none absolute left-4 top-1/2 z-10 h-5 w-5 -translate-y-1/2 text-slate-400" />
           <input
             value={classKeyword}
-            onChange={(event) => setClassKeyword(event.target.value)}
+            onChange={(event) => { setClassKeyword(event.target.value); setClassFilter(''); }}
             className={`word-input has-leading-icon ${classKeyword ? 'has-trailing-action' : ''}`}
-            placeholder="按班级关键词搜索"
+            placeholder="班级关键词，如城轨信号54班"
           />
           {classKeyword && (
             <button
@@ -373,6 +380,10 @@ function AttemptsTable({
             </button>
           )}
         </label>
+        <select aria-label="选择归类班级" value={classFilter} onChange={event => { setClassFilter(event.target.value); setClassKeyword(''); }} className="word-input">
+          <option value="">全部班级（合并写法）</option>
+          {directory.groups.map(group => <option key={group.key} value={group.key}>{group.label} · {group.count}条</option>)}
+        </select>
         <select
           value={unitFilter}
           onChange={(event) => setUnitFilter(event.target.value)}
@@ -406,6 +417,8 @@ function AttemptsTable({
           导出
         </button>
       </div>
+      <ClassGroupingNote groups={directory.groups} />
+      <div className="mb-4"><Metrics attempts={filtered} directory={directory} /></div>
       <p className="mb-3 text-sm font-bold text-slate-500">
         显示 {filtered.length} / {rows.length} 条 · 点击每个单词下方录音可回听
       </p>
@@ -436,7 +449,7 @@ function AttemptsTable({
                   </td>
                 )}
                 <td className="font-bold">{row.student_name}</td>
-                <td>{row.class_name}</td>
+                <td><strong>{directory.resolve(row).label}</strong>{directory.resolve(row).label !== row.class_name && <p className="mt-1 text-xs text-slate-500">原填：{row.class_name}</p>}</td>
                 <td>{row.unit_title}</td>
                 <td>
                   <b className="text-xl text-indigo-700">{row.average_score}</b>
@@ -1243,7 +1256,6 @@ function TeacherApp() {
         )}
         {!loading && tab === 'data' && (
           <div className="mt-5">
-            <Metrics attempts={attempts} />
             <div className="word-card mt-5 p-5">
               <AttemptsTable rows={attempts} showTeacher />
             </div>
@@ -1461,7 +1473,6 @@ function AdminApp() {
           </div>
         ) : (
           <div className="mt-5">
-            <Metrics attempts={attempts} />
             <div className="word-card mt-5 p-5">
               <AttemptsTable rows={attempts} showTeacher />
             </div>

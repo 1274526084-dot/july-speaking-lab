@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { getAdaptiveReply } from '@/lib/adaptive-reply';
 import { scenes, type PracticeTurn, type SceneId } from '@/lib/scenes';
+import { StudentClassField } from '@/components/student-class-field';
 
 type Profile = { name: string; studentId: string; className: string };
 type Stage = 'shadow' | 'choose' | 'practice' | 'result';
@@ -1060,7 +1061,6 @@ export function SpeakingLab({
                   {[
                     ['name', '姓名', '张丽'],
                     ['studentId', '学号', '20260101'],
-                    ['className', '班级', '城轨信号2401'],
                   ].map(([key, label, placeholder]) => (
                     <label
                       key={key}
@@ -1077,6 +1077,7 @@ export function SpeakingLab({
                       />
                     </label>
                   ))}
+                  <StudentClassField value={profile.className} onChange={(className) => setProfile({ ...profile, className })} theme="speaking" />
                 </div>
                 <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl bg-[#edf6f8] p-4 text-sm leading-6 text-[#315f6b]">
                   <input

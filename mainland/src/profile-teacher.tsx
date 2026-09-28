@@ -13,6 +13,9 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createClassDirectory } from '@/lib/class-groups';
+import { CLASS_CATALOG } from '@/lib/class-catalog';
+import { ClassGroupingNote } from '@/components/class-grouping-note';
 import {
   clearProfileTeacherToken,
   COLLEGE_OPTIONS,
@@ -150,14 +153,15 @@ export function ProfileTeacher() {
     return () => window.clearInterval(timer);
   }, [loadRows]);
 
-  const classes = useMemo(() => [...new Set(rows.map((row) => row.class_name))].sort((a, b) => a.localeCompare(b, 'zh-CN')), [rows]);
+  const directory = useMemo(() => createClassDirectory(rows, CLASS_CATALOG.map(class_name => ({ class_name }))), [rows]);
+  const classes = directory.groups;
   const majors = useMemo(() => [...new Set(rows.map((row) => row.major))].sort((a, b) => a.localeCompare(b, 'zh-CN')), [rows]);
   const filtered = useMemo(() => rows.filter((row) => {
     const scoreInfo = entranceScoreInfo(row);
     const college = profileCollege(row);
     const searchable = normalize(`${row.student_name}${row.class_name}${college}${row.major}${scoreInfo.typeLabel}`);
-    return (!keyword || searchable.includes(normalize(keyword))) && (!collegeFilter || college === collegeFilter) && (!classFilter || row.class_name === classFilter) && (!majorFilter || row.major === majorFilter) && (!admissionFilter || scoreInfo.type === admissionFilter) && (!supportOnly || isNeedsSupport(row));
-  }), [admissionFilter, classFilter, collegeFilter, keyword, majorFilter, rows, supportOnly]);
+    return (!keyword || searchable.includes(normalize(keyword)) || directory.matches(row, keyword)) && (!collegeFilter || college === collegeFilter) && (!classFilter || directory.resolve(row).key === classFilter) && (!majorFilter || row.major === majorFilter) && (!admissionFilter || scoreInfo.type === admissionFilter) && (!supportOnly || isNeedsSupport(row));
+  }), [admissionFilter, classFilter, collegeFilter, directory, keyword, majorFilter, rows, supportOnly]);
 
   const scoreInfos = filtered.map(entranceScoreInfo);
   const knownScoreRates = scoreInfos.filter((item) => item.known && item.rate !== null).map((item) => Number(item.rate));
@@ -176,12 +180,12 @@ export function ProfileTeacher() {
     ['未填写', filtered.length - knownScoreRates.length],
   ];
 
-  const classStats = useMemo(() => classes.map((className) => {
-    const members = rows.filter((row) => row.class_name === className);
+  const classStats = useMemo(() => classes.map((group) => {
+    const members = filtered.filter((row) => directory.resolve(row).key === group.key);
     const scores = members.map(entranceScoreInfo).filter((item) => item.known && item.rate !== null).map((item) => Number(item.rate));
     const skills = members.flatMap((row) => skillKeys.map((key) => Number(row.skills[key] || 0)));
-    return { className, count: members.length, averageScoreRate: avg(scores), knownCount: scores.length, skillAverage: avg(skills), compositeAverage: avg(members.map((row) => compositeInfo(row).score)), support: members.filter(isNeedsSupport).length };
-  }).sort((a, b) => b.count - a.count), [classes, rows]);
+    return { classKey: group.key, className: group.label, count: members.length, averageScoreRate: avg(scores), knownCount: scores.length, skillAverage: avg(skills), compositeAverage: avg(members.map((row) => compositeInfo(row).score)), support: members.filter(isNeedsSupport).length };
+  }).filter(item => item.count > 0).sort((a, b) => b.count - a.count), [classes, directory, filtered]);
 
   async function logout() {
     const token = getProfileTeacherToken();
@@ -191,11 +195,11 @@ export function ProfileTeacher() {
 
   function exportCsv() {
     const cell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-    const headers = ['提交时间', '姓名', '班级', '学院', '专业', '入学方式', '英语得分', '英语满分', '英语得分率', '综合成长指数', '单词平均分', '单词练习次数', '口语平均分', '口语练习次数', ...skillKeys.map((key) => `${SKILL_LABELS[key]}/5`), '学习信心/5', '口语紧张/5', '英语兴趣/5', '每周课外时间', '学习习惯', '困难', '学习目标', '喜欢的活动', '择专业原因', '择校原因', '毕业计划', '本学期目标', '给老师的话', '设备情况'];
+    const headers = ['提交时间', '姓名', '学生原填班级', '统计班级', '学院', '专业', '入学方式', '英语得分', '英语满分', '英语得分率', '综合成长指数', '单词平均分', '单词练习次数', '口语平均分', '口语练习次数', ...skillKeys.map((key) => `${SKILL_LABELS[key]}/5`), '学习信心/5', '口语紧张/5', '英语兴趣/5', '每周课外时间', '学习习惯', '困难', '学习目标', '喜欢的活动', '择专业原因', '择校原因', '毕业计划', '本学期目标', '给老师的话', '设备情况'];
     const lines = filtered.map((row) => {
       const scoreInfo = entranceScoreInfo(row);
       const growth = compositeInfo(row);
-      return [dateText(row.updated_at), row.student_name, row.class_name, profileCollege(row), row.major, scoreInfo.typeLabel, scoreInfo.known ? scoreInfo.score : '未填写', scoreInfo.known ? scoreInfo.fullScore : '未填写', scoreInfo.rate === null ? '未填写' : `${scoreInfo.rate.toFixed(1)}%`, growth.score.toFixed(1), growth.word?.average_score ?? '待完成', growth.word?.attempts ?? 0, growth.speaking?.average_score ?? '待完成', growth.speaking?.attempts ?? 0, ...skillKeys.map((key) => row.skills[key]), row.confidence, row.speaking_anxiety, row.english_interest, row.weekly_time, row.current_habits.join('；'), row.difficulties.join('；'), row.learning_goals.join('；'), row.preferred_activities.join('；'), row.major_reasons.join('；'), row.school_reasons.join('；'), row.career_plan, row.semester_goal, row.teacher_message, row.device_ready].map(cell).join(',');
+      return [dateText(row.updated_at), row.student_name, row.class_name, directory.resolve(row).label, profileCollege(row), row.major, scoreInfo.typeLabel, scoreInfo.known ? scoreInfo.score : '未填写', scoreInfo.known ? scoreInfo.fullScore : '未填写', scoreInfo.rate === null ? '未填写' : `${scoreInfo.rate.toFixed(1)}%`, growth.score.toFixed(1), growth.word?.average_score ?? '待完成', growth.word?.attempts ?? 0, growth.speaking?.average_score ?? '待完成', growth.speaking?.attempts ?? 0, ...skillKeys.map((key) => row.skills[key]), row.confidence, row.speaking_anxiety, row.english_interest, row.weekly_time, row.current_habits.join('；'), row.difficulties.join('；'), row.learning_goals.join('；'), row.preferred_activities.join('；'), row.major_reasons.join('；'), row.school_reasons.join('；'), row.career_plan, row.semester_goal, row.teacher_message, row.device_ready].map(cell).join(',');
     });
     const blob = new Blob([`\uFEFF${[headers.map(cell).join(','), ...lines].join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `July-英语学习档案-${new Date().toISOString().slice(0, 10)}.csv`; anchor.click(); URL.revokeObjectURL(url);
@@ -221,18 +225,19 @@ export function ProfileTeacher() {
         <section className="dashboard-filters">
           <label className="search-control"><Search /><input type="search" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索姓名、班级、学院或专业" />{keyword && <button type="button" onClick={() => setKeyword('')} aria-label="清除搜索"><X /></button>}</label>
           <select value={collegeFilter} onChange={(event) => setCollegeFilter(event.target.value)}><option value="">全部学院</option>{COLLEGE_OPTIONS.map((value) => <option key={value}>{value}</option>)}</select>
-          <select value={classFilter} onChange={(event) => setClassFilter(event.target.value)}><option value="">全部班级</option>{classes.map((value) => <option key={value}>{value}</option>)}</select>
+          <select aria-label="选择归类班级" value={classFilter} onChange={(event) => setClassFilter(event.target.value)}><option value="">全部班级（合并写法）</option>{classes.map(group => <option key={group.key} value={group.key}>{group.label}</option>)}</select>
           <select value={majorFilter} onChange={(event) => setMajorFilter(event.target.value)}><option value="">全部专业</option>{majors.map((value) => <option key={value}>{value}</option>)}</select>
           <select value={admissionFilter} onChange={(event) => setAdmissionFilter(event.target.value)}><option value="">全部入学方式</option><option value="gaokao">高考</option><option value="single">单招</option></select>
           <label className={`support-toggle ${supportOnly ? 'active' : ''}`}><input type="checkbox" checked={supportOnly} onChange={(event) => setSupportOnly(event.target.checked)} />只看需要关注</label>
           <span>显示 {filtered.length} / {rows.length} 人</span>
         </section>
 
+        <ClassGroupingNote groups={classes} />
         {error && <p className="dashboard-error">{error}</p>}
         {loading ? <div className="dashboard-loading"><LoaderCircle className="spin" />正在生成班级画像…</div> : (
           <>
             <section className="metrics-grid">
-              <Metric icon={<Users />} value={filtered.length} label="学生档案" note={`${new Set(filtered.map((row) => row.class_name)).size}个班级`} />
+              <Metric icon={<Users />} value={filtered.length} label="学生档案" note={`${new Set(filtered.map((row) => directory.resolve(row).key)).size}个班级`} />
               <Metric icon={<GraduationCap />} value={knownScoreRates.length ? `${averageScoreRate.toFixed(1)}%` : '—'} label="入学英语平均得分率" note={`${knownScoreRates.length}人填写高考/单招成绩`} />
               <Metric icon={<BarChart3 />} value={filtered.length ? `${compositeAverage.toFixed(1)}/100` : '—'} label="综合成长指数" note="档案30% · 单词30% · 单元实践40%" />
               <Metric icon={<BookOpen />} value={supportCount} label="建议重点关注" note="低信心、较紧张或多项薄弱" />
@@ -254,7 +259,7 @@ export function ProfileTeacher() {
 
             <section className="dashboard-panel class-panel">
               <div className="panel-title"><div><p className="eyebrow">CLASS VIEW</p><h3>按班级实时统计</h3></div><span>{classStats.length}个班级</span></div>
-              <div className="table-wrap"><table><thead><tr><th>班级</th><th>档案人数</th><th>英语平均得分率</th><th>成绩填写率</th><th>综合成长指数</th><th>建议关注</th><th></th></tr></thead><tbody>{classStats.map((item) => <tr key={item.className}><td><strong>{item.className}</strong></td><td>{item.count}人</td><td>{item.knownCount ? `${item.averageScoreRate.toFixed(1)}%` : '—'}</td><td>{percent(item.knownCount, item.count)}%</td><td>{item.compositeAverage.toFixed(1)} / 100</td><td><span className={item.support ? 'risk-badge' : 'ok-badge'}>{item.support}人</span></td><td><button type="button" className="table-action" onClick={() => { setClassFilter(item.className); document.getElementById('student-profiles')?.scrollIntoView({ behavior: 'smooth' }); }}>查看学生</button></td></tr>)}</tbody></table></div>
+              <div className="table-wrap"><table><thead><tr><th>班级</th><th>档案人数</th><th>英语平均得分率</th><th>成绩填写率</th><th>综合成长指数</th><th>建议关注</th><th></th></tr></thead><tbody>{classStats.map((item) => <tr key={item.classKey}><td><strong>{item.className}</strong></td><td>{item.count}人</td><td>{item.knownCount ? `${item.averageScoreRate.toFixed(1)}%` : '—'}</td><td>{percent(item.knownCount, item.count)}%</td><td>{item.compositeAverage.toFixed(1)} / 100</td><td><span className={item.support ? 'risk-badge' : 'ok-badge'}>{item.support}人</span></td><td><button type="button" className="table-action" onClick={() => { setClassFilter(item.classKey); document.getElementById('student-profiles')?.scrollIntoView({ behavior: 'smooth' }); }}>查看学生</button></td></tr>)}</tbody></table></div>
             </section>
 
             <section className="dashboard-panel profiles-panel" id="student-profiles">
@@ -262,7 +267,7 @@ export function ProfileTeacher() {
               {filtered.length ? <div className="profile-list">{filtered.map((row) => (
                 <article key={row.id} className="student-profile-row">
                   <span className="avatar">{row.student_name.slice(0, 1)}</span>
-                  <div className="student-main"><strong>{row.student_name}</strong><p>{row.class_name} · {profileCollege(row)} · {row.major}</p></div>
+                  <div className="student-main"><strong>{row.student_name}</strong><p>{directory.resolve(row).label} · {profileCollege(row)} · {row.major}</p>{directory.resolve(row).label !== row.class_name && <small>原填班级：{row.class_name}</small>}</div>
                   <div><small>入学英语</small><strong>{entranceScoreInfo(row).text}</strong></div>
                   <div><small>综合画像</small><strong>{compositeInfo(row).score.toFixed(1)} / 100</strong></div>
                   <div><small>学习目标</small><p className="tag-line">{row.learning_goals.slice(0, 2).join(' · ') || '未填写'}</p></div>

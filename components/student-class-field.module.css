@@ -1,0 +1,98 @@
+.field {
+  --class-accent: #0d766e;
+  --class-border: #cad8d3;
+  --class-fill: #fbfcfa;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  color: #35433f;
+  font-size: .9rem;
+}
+
+.field[data-theme='words'] {
+  --class-accent: #4f46e5;
+  --class-border: #cad3e6;
+  --class-fill: #fbfcff;
+  color: #334155;
+}
+
+.field[data-theme='speaking'] {
+  --class-accent: #416b36;
+  --class-border: #dcc5b2;
+  --class-fill: #fffaf6;
+  color: #59645a;
+}
+
+.label { font-weight: 800; }
+.selectionLabel { color: #53625d; font-size: .78rem; }
+
+.control {
+  width: 100%;
+  min-width: 0;
+  min-height: 50px;
+  border: 1px solid var(--class-border);
+  border-radius: 13px;
+  padding: 10px 13px;
+  background: var(--class-fill);
+  color: #273327;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+.control:focus-visible,
+.helperToggle:focus-visible,
+.apply:focus-visible {
+  outline: 3px solid var(--class-accent);
+  outline-offset: 2px;
+}
+
+.hint, .warning, .preview {
+  margin: 0;
+  font-size: .76rem;
+  font-weight: 400;
+  line-height: 1.65;
+}
+.hint { color: #66736f; }
+.warning { color: #995018; }
+.helperToggle {
+  justify-self: start;
+  min-height: 36px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--class-accent);
+  font-size: .79rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+.helper {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--class-border);
+  border-radius: 14px;
+  background: var(--class-fill);
+}
+.parts { display: grid; grid-template-columns: 1fr; gap: 10px; }
+.parts label { display: grid; gap: 5px; font-size: .76rem; font-weight: 700; }
+.parts input { background: #fff; }
+.preview { overflow-wrap: anywhere; }
+.apply {
+  min-height: 42px;
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--class-accent);
+  color: #fff;
+  font-size: .85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.apply:disabled { opacity: .5; cursor: not-allowed; }
+
+@media (min-width: 640px) {
+  .parts { grid-template-columns: minmax(0, .7fr) minmax(0, 1.4fr) minmax(0, .7fr); }
+}

@@ -1,0 +1,1 @@
+import'data:text/javascript,"assets/profileTeacher-20260928-classes1.js";if(!import.meta.resolve)throw Error("import.meta.resolve not supported")';export function __vite_legacy_guard(){import.meta.url,import("_").catch(()=>1),async function*(){}().next()}import"./chunks/class-grouping-note-20260928-classes1.js";import"./chunks/profile-main-20260928-classes1.js";
