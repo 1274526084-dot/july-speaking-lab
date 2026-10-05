@@ -1,0 +1,1 @@
+System.register(["./chunks/class-groups-legacy-20261005-unit2.js","./chunks/profile-main-legacy-20261005-unit2.js"],function(n,e){return{setters:[function(n){},function(n){}],execute:function(){}}});

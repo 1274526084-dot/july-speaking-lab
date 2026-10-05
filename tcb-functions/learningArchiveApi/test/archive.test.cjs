@@ -1,6 +1,46 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createApi, PROJECT_ID, COLLECTIONS: C, LEGACY, hash } = require('../service');
+const { gradeUnit2, unit2Summary } = require('../unit2');
+
+test('Unit 2 submissions are server scored, idempotent and bound to the authorized student', async () => {
+  const f = fixture({ [LEGACY.profiles]: [profile('keep-profile')], [LEGACY.words]: [word('keep-word')] });
+  const auth = await f.authorize();
+  const payload = { studentToken: auth.studentToken, requestId: 'unit2-test-0001', activity: 'pinglu', score: 999, answers: ['connects','gives','began','opened','have carried','have learned','are watching','are explaining','will help','are going to write'] };
+  const submissions = await Promise.all([f.call('saveUnit2Attempt', payload), f.call('saveUnit2Attempt', payload)]);
+  assert.ok(submissions.every(row => row.submission.score === 100));
+  assert.equal(f.db.rows(C.unit2).length, 1);
+  assert.equal((await f.call('saveUnit2Attempt', { ...payload, answers: Array(10).fill('wrong') })).status, 409);
+  f.advance(5);
+  assert.equal((await f.call('saveUnit2Attempt', { ...payload, requestId: 'unit2-test-0002', answers: Array(10).fill('wrong') })).submission.score, 0);
+  assert.equal(f.db.rows(LEGACY.profiles).length, 1);
+  assert.equal(f.db.rows(LEGACY.words).length, 1);
+  assert.ok(f.db.writes.every(write => !Object.values(LEGACY).includes(write.collection)));
+  const other = await f.authorize('另一位学生');
+  assert.equal((await f.call('unit2Dashboard', { studentToken: other.studentToken })).unit2.attemptCount, 0);
+  const teacher = await f.call('teacherDashboard', { token: f.tokens.lisa });
+  assert.equal(teacher.students.find(row => row.id === auth.studentId).unit2.stages.pinglu.first, 100);
+  const detail = await f.call('teacherStudent', { token: f.tokens.lisa, studentId: auth.studentId });
+  assert.equal(detail.history.filter(row => row.type === 'unit2').length, 2);
+  assert.equal(detail.unit2.stages.pinglu.latest, 0);
+  assert.equal((await f.call('saveUnit2Attempt', { ...payload, studentToken: other.studentToken, requestId: 'unit2-test-0003', activity: 'malaysia' })).status, 400);
+});
+
+test('Unit 2 validators reject partial games and preserve writing content and missing radar values', () => {
+  assert.throws(() => gradeUnit2({ activity: 'verbs', answers: Array(10).fill({verb:'begin',answer:'begun'}) }));
+  assert.throws(() => gradeUnit2({ activity: 'writingEssay', major: 'signal', essay: 'Too short.' }));
+  const essay='On Monday afternoon, I had my first class in the locomotive training room. At first, I felt nervous because everything was new. I could not find the brake on the model, so I stood there worried. My classmate Li Ming helped me look at a diagram. We found the brake together, and I put the label in the right place. At last, I finished the task. I felt more confident and learned that a little help can make a big difference.';
+  const result = gradeUnit2({ activity: 'writingEssay', major: 'train', essay, score: 0 });
+  assert.equal(result.score, 100);
+  assert.equal(result.details.essay, essay);
+  assert.equal(result.details.needsReview, true);
+  const summary = unit2Summary([{id:'a',activity:'pinglu',score:0,created_at:10},{id:'b',activity:'pinglu',score:60,created_at:20},{id:'c',activity:'tense',score:80,created_at:30}]);
+  assert.equal(summary.pretest, 0);
+  assert.equal(summary.change, 80);
+  assert.equal(summary.radar.verbs, null);
+  assert.equal(summary.radar.writing, null);
+  assert.equal(summary.completed, 2);
+});
 
 const copy = value => structuredClone(value);
 function memoryDb(seed = {}, options = {}) {

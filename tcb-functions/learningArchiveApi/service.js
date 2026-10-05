@@ -2,6 +2,7 @@
 const { createHash, randomBytes, randomUUID, randomInt, timingSafeEqual } = require('node:crypto');
 const { createClassDirectory } = require('./class-groups');
 const { CLASS_CATALOG } = require('./class-catalog');
+const { gradeUnit2, unit2Summary } = require('./unit2');
 
 const PROJECT_ID = 'lzrtc-public-english-2026';
 const TEACHERS = new Set(['cherie', 'lisa', 'alice', 'july']);
@@ -11,6 +12,7 @@ const COLLECTIONS = Object.freeze({
   sessions: 'english_archive_sessions', reflections: 'english_archive_reflections',
   tasks: 'english_archive_tasks', news: 'english_archive_news',
   submissions: 'english_archive_quiz_submissions', rates: 'english_archive_rates',
+  unit2: 'english_archive_unit2_attempts',
 });
 const LEGACY = Object.freeze({ profiles: 'english_learning_profiles', words: 'word_attempts', speaking: 'speaking_attempts' });
 const DAY = 24 * 60 * 60 * 1000;
@@ -219,7 +221,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
   }
   async function datasets() {
     const startedAt = Date.now();
-    const names = ['profiles', 'words', 'speaking', 'students', 'reflections', 'submissions', 'tasks', 'news'];
+    const names = ['profiles', 'words', 'speaking', 'students', 'reflections', 'submissions', 'tasks', 'news', 'unit2'];
     const result = await Promise.all(names.map(key => read(LEGACY[key] || COLLECTIONS[key], LEGACY[key] ? {} : { project_id: PROJECT_ID }, Boolean(LEGACY[key]))));
     const data = { hasMore: result.some(item => item.hasMore), incompleteCollections: names.filter((_, i) => result[i].hasMore), scans: Object.fromEntries(names.map((key, index) => [key, { scanned: result[index].rows.length, total: result[index].totalCount, pages: result[index].pages, elapsedMs: result[index].elapsedMs }])) };
     names.forEach((key, index) => { data[key] = LEGACY[key] ? result[index].rows.filter(row => scoped(row, key) && (key !== 'words' || row.status === 'completed')) : result[index].rows.filter(tagged); });
@@ -255,7 +257,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
         if (kind === 'profiles' && (!bucket.profile || Number(tagged(row)) > Number(tagged(bucket.profile)) || (tagged(row) === tagged(bucket.profile) && timestamp(row) > timestamp(bucket.profile)))) bucket.profile = row;
       }
     }
-    for (const kind of ['reflections', 'submissions']) {
+    for (const kind of ['reflections', 'submissions', 'unit2']) {
       data[`${kind}ByStudent`] = new Map();
       for (const row of data[kind]) {
         const bucket = data[`${kind}ByStudent`].get(row.student_id) || [];
@@ -321,7 +323,8 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     const speaking = legacyRows('speaking', student, data).map(row => ({ id: `speaking:${row.id || row._id}`, type: 'speaking', title: text(row.scene_title, 160) || '情景口语练习', submittedAt: timestamp(row), score: score(row.total_score), details: { studentId: text(row.student_id, 60), transcript: text(row.transcript, 8000), feedback: typeof row.feedback === 'string' ? text(row.feedback, 4000) : parse(row.feedback, {}), taskScore: score(row.task_score), sentenceScore: score(row.sentence_score), clarityScore: score(row.clarity_score), interactionScore: score(row.interaction_score), durationSeconds: Number(row.duration_seconds || 0) }, audio: array(row.audio_manifest).map((clip, index) => ({ fileId: clip.key, label: `第${Number(clip.round) || index + 1}轮录音` })) }));
     const quizzes = archiveRows('submissions', student, data).map(row => ({ id: `quiz:${row.id || row._id}`, type: 'quiz', taskId: row.task_id, title: row.task_title, submittedAt: row.created_at, score: row.score, details: { taskId: row.task_id, taskVersion: row.task_version ?? row.task_updated_at, answers: row.answers, feedback: row.feedback, total: row.total, correct: row.correct }, audio: [] }));
     const profiles = includeProfiles ? legacyRows('profiles', student, data).map(row => ({ id: `profile:${row.id || row._id}`, type: 'profile', title: '学期初学习画像', submittedAt: timestamp(row), score: null, details: publicProfile(row), audio: [] })) : [];
-    return [...words, ...speaking, ...quizzes, ...profiles].sort((a, b) => b.submittedAt - a.submittedAt);
+    const unit2 = archiveRows('unit2', student, data).map(row => ({ id: `unit2:${row.id}`, type: 'unit2', title: row.title, submittedAt: row.created_at, score: row.score, details: { ...row.details, activity: row.activity, total: row.total, correct: row.correct }, audio: [] }));
+    return [...words, ...speaking, ...quizzes, ...profiles, ...unit2].sort((a, b) => b.submittedAt - a.submittedAt);
   }
   function summaryFor(history, reflections) {
     const words = history.filter(row => row.type === 'word'), speaking = history.filter(row => row.type === 'speaking'), quizzes = history.filter(row => row.type === 'quiz');
@@ -331,20 +334,24 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     const words = legacyRows('words', student, data), speaking = legacyRows('speaking', student, data);
     const profiles = includeProfiles ? legacyRows('profiles', student, data) : [];
     const quizzes = archiveRows('submissions', student, data), reflections = archiveRows('reflections', student, data);
+    const unit2 = archiveRows('unit2', student, data);
     return {
-      historyCount: words.length + speaking.length + profiles.length + quizzes.length,
+      unit2: unit2Summary(unit2),
+      historyCount: words.length + speaking.length + profiles.length + quizzes.length + unit2.length,
       wordCount: words.length, speakingCount: speaking.length, quizCount: quizzes.length,
       wordAverage: mean(words.map(row => ({ score: score(row.average_score) }))),
       speakingAverage: mean(speaking.map(row => ({ score: score(row.total_score) }))),
       quizAverage: mean(quizzes.map(row => ({ score: row.score }))),
-      lastActive: Math.max(0, ...words.map(timestamp), ...speaking.map(timestamp), ...profiles.map(timestamp), ...quizzes.map(row => row.created_at), ...reflections.map(row => row.created_at)),
+      lastActive: Math.max(0, ...words.map(timestamp), ...speaking.map(timestamp), ...profiles.map(timestamp), ...quizzes.map(row => row.created_at), ...reflections.map(row => row.created_at), ...unit2.map(row => row.created_at)),
       reflectionCount: reflections.length,
     };
   }
   async function dashboard(student, data, includeProfiles = true, isTeacher = false) {
     const reflections = [...archiveRows('reflections', student, data)].sort((a, b) => b.created_at - a.created_at);
     const history = historyFor(student, data, includeProfiles);
+    const unit2 = unit2Summary(archiveRows('unit2', student, data));
     const output = { student: publicStudent(student), profile: includeProfiles ? publicProfile(profileFor(student, data)) : null, profileRestricted: !includeProfiles, history: await signedAudio(history), tasks: data.tasks.filter(row => row.status === 'published' && assigned(row, student, data)).map(row => publicTask(row)), news: data.news.filter(row => row.status === 'published').map(publicNews).sort((a, b) => b.updatedAt - a.updatedAt), snapshots: reflections.map(row => ({ id: row.id, createdAt: row.created_at, skills: row.skills, goals: row.goals })), summary: summaryFor(history, reflections), hasMore: data.hasMore, warnings: data.hasMore ? ['记录数量超过本次读取上限，显示结果可能不完整，请联系管理员分批导出。'] : [], audioExpiresAt: now() + AUDIO_SECONDS * 1000 };
+    output.unit2 = unit2;
     if (isTeacher) {
       output.identityConflict = identityConflict(student, data);
       if (output.identityConflict) output.warnings.push('同班同名记录出现不同学号，学生访问已暂停。请先核对原始记录；系统不会猜测或合并身份。');
@@ -431,13 +438,37 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
         return { status: 'approved', studentToken, student: publicStudent(student), expiresAt: session.expires_at };
       } catch (error) { if (error.status === 401) return { status: 'revoked' }; throw error; }
     }
-    if (['studentDashboard', 'saveReflection', 'submitQuiz', 'studentLogout'].includes(action)) {
+    if (['studentDashboard', 'saveReflection', 'submitQuiz', 'studentLogout', 'saveUnit2Attempt', 'unit2Dashboard', 'courseSession'].includes(action)) {
       const auth = await studentSession(body.studentToken);
       const { student, session } = auth;
       await rate(event, action, action === 'studentDashboard' ? 90 : 30, 15 * 60 * 1000, student.id);
       if (action === 'studentLogout') {
         await put(COLLECTIONS.sessions, session.id, { ...session, revoked_at: now(), revoked_by: 'student' });
         return {};
+      }
+      if (action === 'courseSession') return { student: publicStudent(student), expiresAt: Math.min(session.expires_at, now() + 2 * 60 * 60 * 1000) };
+      if (action === 'saveUnit2Attempt') {
+        const requestId = requiredText(body.requestId, '提交编号', 100);
+        if (!/^[a-zA-Z0-9_-]{8,100}$/.test(requestId)) fail(400, '提交编号不正确。');
+        let graded;
+        try { graded = gradeUnit2(body); } catch (error) { fail(400, error.message); }
+        const id = `unit2-${hash(`${PROJECT_ID}|${student.id}|${requestId}`).slice(0, 48)}`;
+        const fingerprint = hash(JSON.stringify(graded));
+        const row = await db.runTransaction(async tx => {
+          const previous = await get(COLLECTIONS.unit2, id, tx);
+          if (previous) {
+            if (!tagged(previous) || previous.student_id !== student.id || previous.fingerprint !== fingerprint) fail(409, '提交编号已被其他答案使用，请重新提交。');
+            return previous;
+          }
+          const result = { ...graded, id, fingerprint, project_id: PROJECT_ID, student_id: student.id, unit: 'Unit 2', created_at: now() };
+          await put(COLLECTIONS.unit2, id, result, tx);
+          return result;
+        });
+        return { submission: { id: row.id, activity: row.activity, score: row.score, total: row.total, correct: row.correct, submittedAt: row.created_at } };
+      }
+      if (action === 'unit2Dashboard') {
+        const records = await read(COLLECTIONS.unit2, { project_id: PROJECT_ID, student_id: student.id });
+        return { student: publicStudent(student), unit2: unit2Summary(records.rows), hasMore: records.hasMore };
       }
       const data = await datasets();
       if (data.incompleteCollections.some(key => LEGACY[key] || key === 'students')) fail(409, '身份核验所需的历史记录超过本次读取上限，暂不能安全读取或新增个人档案。请联系老师分批核对；原始记录仍保留。');

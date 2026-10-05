@@ -1,0 +1,1 @@
+System.register(["./chunks/class-groups-legacy-20261005-unit2.js","./chunks/word-main-legacy-20261005-unit2.js"],function(n,t){return{setters:[function(n){},function(n){}],execute:function(){}}});

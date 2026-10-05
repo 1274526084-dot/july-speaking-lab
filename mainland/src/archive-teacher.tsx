@@ -43,13 +43,14 @@ import {
 } from '@/lib/railway-question-bank';
 import { RAILWAY_NEWS_SEEDS } from '@/lib/railway-news';
 import { getTeacherToken, sitePath } from './api';
-import { archiveRequest } from './archive-api';
+import { ArchiveError, archiveRequest, type Unit2Summary } from './archive-api';
+import { Unit2Panel } from './unit2-panel';
 import { LearningAvatar, SkillRadar } from './archive-visuals';
 import { type EnglishProfile, SKILL_LABELS } from './profile-api';
 import { wordPath } from './word-api';
 import './archive-teacher.css';
 
-type Tab = 'students' | 'tasks' | 'news' | 'devices';
+type Tab = 'students' | 'unit2' | 'tasks' | 'news' | 'devices';
 type TaskType =
   | 'word'
   | 'speaking'
@@ -86,6 +87,7 @@ type ArchiveNews = {
   checkedAt?: string;
 };
 type Student = {
+  unit2?: Unit2Summary;
   id: string;
   name: string;
   className: string;
@@ -160,6 +162,8 @@ type History = {
   answers?: unknown[];
   audio?: { url: string; label?: string }[];
   details?: {
+    activity?: string;
+    essay?: string;
     transcript?: string;
     feedback?: unknown;
     averageSelf?: number;
@@ -175,6 +179,7 @@ type History = {
   };
 };
 type StudentDetail = {
+  unit2?: Unit2Summary;
   student?: Student;
   profile?: Partial<EnglishProfile> | null;
   profileRestricted?: boolean;
@@ -420,7 +425,9 @@ export function ArchiveTeacher() {
     window.sessionStorage.getItem('july-english-hub.teacher-name') || 'Teacher';
   const load = useCallback(async (silent = false) => {
     if (!getTeacherToken()) {
-      window.location.replace(sitePath('workbench/login'));
+      window.location.replace(
+        `${sitePath('workbench/login')}?next=archive/teacher`,
+      );
       return;
     }
     if (silent) setRefreshing(true);
@@ -441,6 +448,12 @@ export function ArchiveTeacher() {
       setError('');
       setUpdatedAt(Date.now());
     } catch (requestError) {
+      if (requestError instanceof ArchiveError && requestError.status === 401) {
+        window.sessionStorage.removeItem('july-speaking-lab.teacher-token');
+        window.location.replace(
+          `${sitePath('workbench/login')}?next=archive/teacher`,
+        );
+      }
       setError(errorText(requestError));
     } finally {
       setLoading(false);
@@ -451,6 +464,12 @@ export function ArchiveTeacher() {
     // The same asynchronous fetcher owns loading state for initial load and retries.
     // oxlint-disable-next-line react/react-compiler
     void load();
+  }, [load]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void load(true);
+    }, 30000);
+    return () => window.clearInterval(timer);
   }, [load]);
   const directory = useMemo(
     () =>
@@ -603,6 +622,7 @@ export function ArchiveTeacher() {
           {(
             [
               { id: 'students', label: '班级档案', icon: UsersRound },
+              { id: 'unit2', label: '第二课成绩', icon: GraduationCap },
               { id: 'tasks', label: '任务与组题', icon: ClipboardList },
               { id: 'news', label: '铁路英语窗', icon: Newspaper },
               { id: 'devices', label: '设备确认', icon: ShieldCheck },
@@ -663,6 +683,95 @@ export function ArchiveTeacher() {
           </div>
         ) : (
           <>
+            {tab === 'unit2' && (
+              <section className="at-panel">
+                <div className="at-panel-heading">
+                  <h2>第二课 · 四站学习数据</h2>
+                  <span>每30秒自动更新</span>
+                </div>
+                <div className="at-filters">
+                  <input
+                    aria-label="搜索学生"
+                    placeholder="姓名或班级关键词"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                  <select
+                    aria-label="第二课班级筛选"
+                    value={classFilter}
+                    onChange={(e) => setClassFilter(e.target.value)}
+                  >
+                    <option value="">全部班级</option>
+                    {directory.groups.map((group) => (
+                      <option key={group.key} value={group.key}>
+                        {group.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="at-table-wrap">
+                  <table className="at-table">
+                    <thead>
+                      <tr>
+                        <th>姓名 / 班级</th>
+                        <th>平陆运河首次</th>
+                        <th>动词最近</th>
+                        <th>时态最近</th>
+                        <th>课堂填空</th>
+                        <th>作文</th>
+                        <th>完成项目</th>
+                        <th>档案</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {students.map((student) => (
+                        <tr key={student.id}>
+                          <td>
+                            {student.name}
+                            <br />
+                            <small>{student.className}</small>
+                          </td>
+                          <td>{scoreText(student.unit2?.pretest)}</td>
+                          <td>
+                            {scoreText(student.unit2?.stages.verbs?.latest)}
+                          </td>
+                          <td>{scoreText(student.unit2?.postPractice)}</td>
+                          <td>
+                            {scoreText(
+                              student.unit2?.stages.writingClass?.latest,
+                            )}
+                          </td>
+                          <td>
+                            {scoreText(
+                              student.unit2?.stages.writingEssay?.latest,
+                            )}
+                          </td>
+                          <td>{student.unit2?.completed || 0}/4</td>
+                          <td>
+                            <button
+                              className="at-text-button"
+                              onClick={() => setSelected(student)}
+                            >
+                              查看原文与历史 →
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="at-help">
+                  分数均换算为100分得分率。写作记录保留原文与规则评分依据；点击学生可查看本课雷达和所有尝试。
+                </p>
+                <section className="at-metrics">
+                  <Metric label="平陆运河首次均分" value={scoreText(average(students.map(student => student.unit2?.pretest)))} note="当前筛选班级 · 已提交学生" icon={<GraduationCap />} />
+                  <Metric label="动词最近均分" value={scoreText(average(students.map(student => student.unit2?.stages.verbs?.latest)))} note="当前筛选班级 · 已提交学生" icon={<BookOpen />} />
+                  <Metric label="时态最近均分" value={scoreText(average(students.map(student => student.unit2?.postPractice)))} note="当前筛选班级 · 已提交学生" icon={<ClipboardList />} />
+                  <Metric label="写作综合得分率" value={scoreText(average(students.map(student => student.unit2?.radar.writing)))} note="课堂与作文均完成的学生" icon={<FilePenLine />} />
+                </section>
+                <p className="at-help">当前筛选范围：{students.filter(student => (student.unit2?.attemptCount || 0) > 0).length}人已参与，{students.filter(student => student.unit2?.completed === 4).length}人完成四项。</p>
+              </section>
+            )}
             {tab === 'students' && (
               <>
                 <section className="at-section-heading">
@@ -1485,6 +1594,7 @@ function StudentDialog({
   return (
     <Dialog title={`${student.name}的成长档案`} onClose={onClose} wide>
       <div className="at-dialog-body">
+        <Unit2Panel data={detail?.unit2 || student.unit2} links={false} />
         {error && (
           <Notice danger>
             {error}
@@ -1675,6 +1785,7 @@ function StudentDialog({
                   onChange={(event) => setFilter(event.target.value)}
                 >
                   <option value="all">全部记录</option>
+                  <option value="unit2">第二课测试与写作</option>
                   <option value="word">单词跟读</option>
                   <option value="speaking">情境口语</option>
                   <option value="quiz">铁路小测</option>
@@ -1888,6 +1999,37 @@ function HistoryDetails({ record }: { record: History }) {
     : [];
   return (
     <>
+      {record.type === 'unit2' && (
+        <details>
+          <summary>查看第二课答案 / 作文原文</summary>
+          <div className="at-quiz-feedback">
+            {record.details?.essay && (
+              <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.9 }}>
+                {record.details.essay}
+              </p>
+            )}
+            {(Array.isArray(record.details?.feedback)
+              ? (record.details.feedback as {
+                  prompt: string;
+                  selected: string;
+                  answer: string;
+                  correct: boolean;
+                  explanation?: string;
+                }[])
+              : []
+            ).map((item, index) => (
+              <article key={index}>
+                <strong>
+                  {item.prompt} · {item.correct ? '✓' : '待巩固'}
+                </strong>
+                {item.selected && <p>学生答案：{item.selected}</p>}
+                {item.answer && <p>参考答案：{item.answer}</p>}
+                {item.explanation && <p>{item.explanation}</p>}
+              </article>
+            ))}
+          </div>
+        </details>
+      )}
       {record.details?.results?.length ? (
         <details>
           <summary>查看逐词成绩与识别结果</summary>
@@ -1904,7 +2046,7 @@ function HistoryDetails({ record }: { record: History }) {
           </div>
         </details>
       ) : null}
-      {quizFeedback.length ? (
+      {record.type !== 'unit2' && quizFeedback.length ? (
         <details>
           <summary>查看小测答题与解析</summary>
           <div className="at-quiz-feedback">

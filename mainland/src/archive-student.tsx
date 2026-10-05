@@ -34,6 +34,14 @@ import {
 } from './archive-api';
 import { LearningAvatar, SkillRadar } from './archive-visuals';
 import './archive-student.css';
+import {
+  rememberCourseIdentity,
+  getCourseIdentity,
+  getCourseStudent,
+  COURSE_SESSION_KEY,
+  studentReturnUrl,
+} from './course-session';
+import { Unit2Panel } from './unit2-panel';
 
 const skillKeys = Object.keys(SKILL_LABELS) as Array<keyof typeof SKILL_LABELS>;
 const date = (value?: number | null) =>
@@ -100,8 +108,10 @@ export function ArchiveStudent() {
     tasks: ArchiveTask[];
     news: ArchiveNews[];
   }>({ tasks: [], news: [] });
-  const [name, setName] = useState('');
-  const [className, setClassName] = useState('');
+  const [name, setName] = useState(() => getCourseStudent()?.name || '');
+  const [className, setClassName] = useState(
+    () => getCourseStudent()?.className || '',
+  );
   const [remember, setRemember] = useState(false);
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState('');
@@ -120,6 +130,19 @@ export function ArchiveStudent() {
   useEffect(() => {
     activeToken.current = token;
   }, [token]);
+  useEffect(() => {
+    const syncIdentity = (event: StorageEvent) => {
+      if (event.key !== COURSE_SESSION_KEY) return;
+      const next = getCourseIdentity()?.token || '';
+      if (next === activeToken.current) return;
+      activeToken.current = next;
+      sessionStorage.removeItem('july.archive.student-session.v1');
+      setData(null);
+      setToken(next);
+    };
+    window.addEventListener('storage', syncIdentity);
+    return () => window.removeEventListener('storage', syncIdentity);
+  }, []);
 
   const load = useCallback(
     async (value = token) => {
@@ -131,7 +154,31 @@ export function ArchiveStudent() {
           'studentDashboard',
           { studentToken: value },
         );
-        if (activeToken.current === value) setData(result);
+        if (activeToken.current === value) {
+          setData(result);
+          if (getCourseIdentity()?.token !== value) {
+            const ids = [
+              ...new Set(
+                result.history
+                  .filter((row) => row.type === 'speaking')
+                  .map(
+                    (row) => (row.details as { studentId?: string })?.studentId,
+                  )
+                  .filter(Boolean),
+              ),
+            ];
+            rememberCourseIdentity({
+              token: value,
+              student: {
+                ...result.student,
+                ...(ids.length === 1 ? { studentNumber: ids[0] } : {}),
+              },
+              expiresAt: Date.now() + 2 * 60 * 60 * 1000,
+            });
+          }
+          const next = studentReturnUrl();
+          if (next) window.location.replace(next);
+        }
       } catch (err) {
         if (activeToken.current !== value) return;
         setError(
@@ -510,6 +557,7 @@ export function ArchiveStudent() {
           </nav>
           {tab === 'portrait' && (
             <>
+              <Unit2Panel data={data.unit2} />
               <section className="archive-portrait-grid">
                 <article className="archive-card archive-avatar-card">
                   <span className="archive-eyebrow">MY LEARNING COMPANION</span>
@@ -646,6 +694,7 @@ export function ArchiveStudent() {
           )}
           {tab === 'path' && (
             <>
+              <Unit2Panel data={data.unit2} />
               <div className="archive-section-heading">
                 <div>
                   <span className="archive-eyebrow">YOUR NEXT STATION</span>
@@ -818,6 +867,7 @@ function Portfolio({ records }: { records: ArchiveHistory[] }) {
             <option value="word">单词跟读</option>
             <option value="speaking">情景口语</option>
             <option value="quiz">课堂小测</option>
+            <option value="unit2">第二课测试与写作</option>
             <option value="profile">学情调查</option>
           </select>
         </label>
@@ -835,6 +885,7 @@ function Portfolio({ records }: { records: ArchiveHistory[] }) {
                     word: '单词跟读',
                     speaking: '情景口语',
                     quiz: '课堂小测',
+                    unit2: '第二课',
                     profile: '学情调查',
                   }[row.type] || '学习记录'}
                 </span>
@@ -861,6 +912,7 @@ function Portfolio({ records }: { records: ArchiveHistory[] }) {
               </label>
             ))}
             {row.type !== 'profile' &&
+              row.type !== 'unit2' &&
               !row.audio?.length &&
               row.type !== 'quiz' && (
                 <p className="archive-small">
@@ -916,6 +968,33 @@ function RecordFeedback({ row }: { row: ArchiveHistory }) {
   )
     return null;
   const detail = row.details as RecordFeedbackDetails;
+  if (row.type === 'unit2') {
+    const content = row.details as {
+      essay?: string;
+      feedback?: {
+        prompt: string;
+        selected: string;
+        answer: string;
+        correct: boolean;
+        explanation?: string;
+      }[];
+    };
+    return (
+      <div className="archive-details">
+        {content.essay && <p className="archive-transcript">{content.essay}</p>}
+        {content.feedback?.map((item, i) => (
+          <article key={i}>
+            <strong>
+              {item.prompt} · {item.correct ? '✓' : '待巩固'}
+            </strong>
+            {item.selected && <p>你的答案：{item.selected}</p>}
+            {item.answer && <p>参考答案：{item.answer}</p>}
+            {item.explanation && <p>{item.explanation}</p>}
+          </article>
+        ))}
+      </div>
+    );
+  }
   if (row.type === 'word')
     return (
       <div className="archive-details">

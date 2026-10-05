@@ -1,4 +1,5 @@
 import { sitePath } from './api';
+import { clearCourseIdentity, getCourseIdentity } from './course-session';
 
 export const ARCHIVE_API_URL =
   'https://cloudbase-d3gxxe4l88c3d5907-1431364187.ap-shanghai.app.tcloudbase.com/learningArchiveApi';
@@ -8,6 +9,7 @@ export const archivePath = (path = '') =>
   sitePath(`archive${path ? `/${path}` : ''}`);
 export function getArchiveToken() {
   return (
+    getCourseIdentity()?.token ||
     sessionStorage.getItem(STUDENT_TOKEN) ||
     localStorage.getItem(STUDENT_TOKEN) ||
     ''
@@ -18,6 +20,7 @@ export function setArchiveToken(value: string, remember = false) {
   (remember ? localStorage : sessionStorage).setItem(STUDENT_TOKEN, value);
 }
 export function clearArchiveToken() {
+  clearCourseIdentity();
   sessionStorage.removeItem(STUDENT_TOKEN);
   localStorage.removeItem(STUDENT_TOKEN);
 }
@@ -143,6 +146,7 @@ export type ArchiveSnapshot = {
   goals?: string;
 };
 export type StudentArchiveData = {
+  unit2?: Unit2Summary;
   student: { id: string; name: string; className: string };
   profile: {
     skills?: Record<string, number>;
@@ -157,4 +161,20 @@ export type StudentArchiveData = {
   warnings?: string[];
   hasMore?: boolean;
   summary?: Record<string, unknown>;
+};
+export type Unit2Stage = {
+  first: number;
+  latest: number;
+  best: number;
+  attempts: number;
+  submittedAt: number;
+};
+export type Unit2Summary = {
+  stages: Partial<Record<string, Unit2Stage | null>>;
+  radar: Partial<Record<string, number | null>>;
+  completed: number;
+  attemptCount: number;
+  pretest: number | null;
+  postPractice: number | null;
+  change: number | null;
 };

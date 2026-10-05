@@ -12,6 +12,7 @@ import {
   Volume2,
 } from 'lucide-react';
 import { type SyntheticEvent, useEffect, useRef, useState } from 'react';
+import { getCourseStudent, rememberCourseStudent } from './course-session';
 import { StudentClassField } from '@/components/student-class-field';
 import {
   prepareAudioForUpload,
@@ -69,13 +70,18 @@ function normalizeUnitCode(value: string) {
 function blobToBase64(blob: Blob) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+    reader.onload = () =>
+      resolve(String(reader.result || '').split(',')[1] || '');
     reader.onerror = () => reject(reader.error || new Error('无法读取录音'));
     reader.readAsDataURL(blob);
   });
 }
 
-function pcmToWav(chunks: Float32Array[], sourceRate: number, targetRate = 16_000) {
+function pcmToWav(
+  chunks: Float32Array[],
+  sourceRate: number,
+  targetRate = 16_000,
+) {
   const inputLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
   if (!inputLength || !sourceRate) return null;
   const input = new Float32Array(inputLength);
@@ -89,12 +95,22 @@ function pcmToWav(chunks: Float32Array[], sourceRate: number, targetRate = 16_00
   const buffer = new ArrayBuffer(44 + outputLength * 2);
   const view = new DataView(buffer);
   const write = (at: number, value: string) => {
-    for (let index = 0; index < value.length; index += 1) view.setUint8(at + index, value.charCodeAt(index));
+    for (let index = 0; index < value.length; index += 1)
+      view.setUint8(at + index, value.charCodeAt(index));
   };
-  write(0, 'RIFF'); view.setUint32(4, 36 + outputLength * 2, true); write(8, 'WAVE'); write(12, 'fmt ');
-  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
-  view.setUint32(24, targetRate, true); view.setUint32(28, targetRate * 2, true);
-  view.setUint16(32, 2, true); view.setUint16(34, 16, true); write(36, 'data'); view.setUint32(40, outputLength * 2, true);
+  write(0, 'RIFF');
+  view.setUint32(4, 36 + outputLength * 2, true);
+  write(8, 'WAVE');
+  write(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, targetRate, true);
+  view.setUint32(28, targetRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  write(36, 'data');
+  view.setUint32(40, outputLength * 2, true);
   for (let index = 0; index < outputLength; index += 1) {
     const position = index * ratio;
     const left = Math.floor(position);
@@ -102,7 +118,11 @@ function pcmToWav(chunks: Float32Array[], sourceRate: number, targetRate = 16_00
     const next = input[Math.min(left + 1, input.length - 1)] || 0;
     const sample = input[left] * (1 - fraction) + next * fraction;
     const clamped = Math.max(-1, Math.min(1, sample));
-    view.setInt16(44 + index * 2, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+    view.setInt16(
+      44 + index * 2,
+      clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff,
+      true,
+    );
   }
   return new Blob([buffer], { type: 'audio/wav' });
 }
@@ -113,12 +133,25 @@ async function recognizeWithCloud(blob: Blob, target: string) {
     const chunkSize = 60_000;
     const totalChunks = Math.ceil(encoded.length / chunkSize);
     if (!encoded || totalChunks < 1 || totalChunks > 32) return '';
-    const uploadId = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+    const uploadId =
+      window.crypto?.randomUUID?.() ||
+      `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
     let transcript = '';
     for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
-      const payload = await wordRequest<{ ok: boolean; pending?: boolean; transcript?: string }>('recognizeWordChunk', {
-        uploadId, target, type: blob.type || 'audio/wav', chunkIndex, totalChunks,
-        data: encoded.slice(chunkIndex * chunkSize, (chunkIndex + 1) * chunkSize),
+      const payload = await wordRequest<{
+        ok: boolean;
+        pending?: boolean;
+        transcript?: string;
+      }>('recognizeWordChunk', {
+        uploadId,
+        target,
+        type: blob.type || 'audio/wav',
+        chunkIndex,
+        totalChunks,
+        data: encoded.slice(
+          chunkIndex * chunkSize,
+          (chunkIndex + 1) * chunkSize,
+        ),
       });
       transcript = payload.transcript?.trim() || transcript;
     }
@@ -136,10 +169,16 @@ export function WordStudent() {
   const [loading, setLoading] = useState(Boolean(queryCode));
   const [error, setError] = useState('');
   const [name, setName] = useState(
-    () => window.localStorage.getItem('word-lab.student-name') || '',
+    () =>
+      getCourseStudent()?.name ||
+      window.localStorage.getItem('word-lab.student-name') ||
+      '',
   );
   const [className, setClassName] = useState(
-    () => window.localStorage.getItem('word-lab.student-class') || '',
+    () =>
+      getCourseStudent()?.className ||
+      window.localStorage.getItem('word-lab.student-class') ||
+      '',
   );
   const [consent, setConsent] = useState(false);
   const [attemptId, setAttemptId] = useState('');
@@ -176,11 +215,21 @@ export function WordStudent() {
   const pcmSampleRateRef = useRef(0);
 
   function releaseAudioCapture() {
-    if (audioProcessorRef.current) audioProcessorRef.current.onaudioprocess = null;
-    try { audioProcessorRef.current?.disconnect(); } catch { /* already disconnected */ }
-    try { audioSourceRef.current?.disconnect(); } catch { /* already disconnected */ }
+    if (audioProcessorRef.current)
+      audioProcessorRef.current.onaudioprocess = null;
+    try {
+      audioProcessorRef.current?.disconnect();
+    } catch {
+      /* already disconnected */
+    }
+    try {
+      audioSourceRef.current?.disconnect();
+    } catch {
+      /* already disconnected */
+    }
     const audioContext = audioContextRef.current;
-    if (audioContext && audioContext.state !== 'closed') void audioContext.close().catch(() => undefined);
+    if (audioContext && audioContext.state !== 'closed')
+      void audioContext.close().catch(() => undefined);
     audioProcessorRef.current = null;
     audioSourceRef.current = null;
     audioContextRef.current = null;
@@ -244,6 +293,7 @@ export function WordStudent() {
       });
       window.localStorage.setItem('word-lab.student-name', name.trim());
       window.localStorage.setItem('word-lab.student-class', className.trim());
+      rememberCourseStudent({ name, className });
       setAttemptId(payload.attemptId);
       setSubmitToken(payload.submitToken);
     } catch (requestError) {
@@ -276,7 +326,9 @@ export function WordStudent() {
       pcmChunksRef.current = [];
       pcmSampleRateRef.current = 0;
       try {
-        const browserWindow = window as typeof window & { webkitAudioContext?: typeof AudioContext };
+        const browserWindow = window as typeof window & {
+          webkitAudioContext?: typeof AudioContext;
+        };
         const Context = window.AudioContext || browserWindow.webkitAudioContext;
         if (Context) {
           const audioContext = new Context();
@@ -285,7 +337,10 @@ export function WordStudent() {
           const processor = audioContext.createScriptProcessor(4096, 1, 1);
           pcmSampleRateRef.current = audioContext.sampleRate;
           processor.onaudioprocess = (event) => {
-            if (recorderRef.current?.state === 'recording') pcmChunksRef.current.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+            if (recorderRef.current?.state === 'recording')
+              pcmChunksRef.current.push(
+                new Float32Array(event.inputBuffer.getChannelData(0)),
+              );
           };
           source.connect(processor);
           processor.connect(audioContext.destination);
@@ -317,10 +372,17 @@ export function WordStudent() {
         if (event.data.size) chunksRef.current.push(event.data);
       };
       recorder.onstop = () => {
-        const originalBlob = new Blob(chunksRef.current, { type: recorder.mimeType || chunksRef.current[0]?.type || 'audio/webm' });
-        const wavBlob = pcmToWav(pcmChunksRef.current, pcmSampleRateRef.current);
+        const originalBlob = new Blob(chunksRef.current, {
+          type: recorder.mimeType || chunksRef.current[0]?.type || 'audio/webm',
+        });
+        const wavBlob = pcmToWav(
+          pcmChunksRef.current,
+          pcmSampleRateRef.current,
+        );
         const blob = wavBlob && wavBlob.size > 2_400 ? wavBlob : originalBlob;
-        setRecordedDurationMs(Math.max(0, Date.now() - recordingStartedRef.current));
+        setRecordedDurationMs(
+          Math.max(0, Date.now() - recordingStartedRef.current),
+        );
         setClip(blob);
         setClipUrl(URL.createObjectURL(blob));
         stream.getTracks().forEach((track) => track.stop());
@@ -403,14 +465,19 @@ export function WordStudent() {
         currentWord.word,
       );
       const uploadClip = await prepareAudioForUpload(clip);
-      const cloudTranscript = await recognizeWithCloud(uploadClip, currentWord.word);
+      const cloudTranscript = await recognizeWithCloud(
+        uploadClip,
+        currentWord.word,
+      );
       const finalTranscript = cloudTranscript || transcript;
       const finalConfidence = cloudTranscript ? 0.9 : confidence;
       if (cloudTranscript) {
         setTranscript(cloudTranscript);
         setConfidence(finalConfidence);
       }
-      const recordingLooksValid = assessment.speechDetected || (clip.size > 2_500 && recordedDurationMs >= 350);
+      const recordingLooksValid =
+        assessment.speechDetected ||
+        (clip.size > 2_500 && recordedDurationMs >= 350);
       if (!recordingLooksValid) {
         setError('录音中没有检测到清晰人声，请靠近麦克风重新录制。');
         return;
@@ -430,22 +497,21 @@ export function WordStudent() {
         score: number;
         advice: string;
         scoringMode: 'speech-recognition' | 'acoustic-fallback' | 'no-speech';
-      }>(
-        'studentConfirmWord',
-        {
-          attemptId,
-          submitToken,
-          wordId: unit.words[index].id,
-          fileId: prepared.upload.fileId,
-          transcript: finalTranscript,
-          confidence: finalConfidence,
-          selfRating,
-          acousticScore: assessment.speechDetected ? assessment.acousticScore : 55,
-          speechDetected: recordingLooksValid,
-          durationMs: assessment.durationMs || recordedDurationMs,
-          referenceCompared: assessment.referenceCompared,
-        },
-      );
+      }>('studentConfirmWord', {
+        attemptId,
+        submitToken,
+        wordId: unit.words[index].id,
+        fileId: prepared.upload.fileId,
+        transcript: finalTranscript,
+        confidence: finalConfidence,
+        selfRating,
+        acousticScore: assessment.speechDetected
+          ? assessment.acousticScore
+          : 55,
+        speechDetected: recordingLooksValid,
+        durationMs: assessment.durationMs || recordedDurationMs,
+        referenceCompared: assessment.referenceCompared,
+      });
       setFeedback({
         score: payload.score,
         advice: payload.advice,
@@ -621,7 +687,12 @@ export function WordStudent() {
                     placeholder="请输入真实姓名"
                   />
                 </label>
-                <StudentClassField required value={className} onChange={setClassName} theme="words" />
+                <StudentClassField
+                  required
+                  value={className}
+                  onChange={setClassName}
+                  theme="words"
+                />
               </div>
               <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3.5 text-sm leading-6">
                 <input
@@ -739,7 +810,11 @@ export function WordStudent() {
               <p className="word-step">STEP 1 · 听词典标准发音</p>
               {current.audioUrl ? (
                 <WordDemoAudio
-                  urls={current.audioUrls?.length ? current.audioUrls : [current.audioUrl]}
+                  urls={
+                    current.audioUrls?.length
+                      ? current.audioUrls
+                      : [current.audioUrl]
+                  }
                   phrase={current.word}
                 />
               ) : (

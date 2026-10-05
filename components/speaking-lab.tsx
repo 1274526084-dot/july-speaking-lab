@@ -18,6 +18,10 @@ import {
 import { getAdaptiveReply } from '@/lib/adaptive-reply';
 import { scenes, type PracticeTurn, type SceneId } from '@/lib/scenes';
 import { StudentClassField } from '@/components/student-class-field';
+import {
+  getCourseStudent,
+  rememberCourseStudent,
+} from '@/mainland/src/course-session';
 
 type Profile = { name: string; studentId: string; className: string };
 type Stage = 'shadow' | 'choose' | 'practice' | 'result';
@@ -184,7 +188,11 @@ function blobToBase64(blob: Blob) {
   });
 }
 
-async function postCloudJson<T>(url: string, body: Record<string, unknown>, timeoutMs = 30000) {
+async function postCloudJson<T>(
+  url: string,
+  body: Record<string, unknown>,
+  timeoutMs = 30000,
+) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -196,12 +204,17 @@ async function postCloudJson<T>(url: string, body: Record<string, unknown>, time
     });
     const raw = await response.text();
     let payload: T & { ok?: boolean; error?: string };
-    try { payload = JSON.parse(raw) as T & { ok?: boolean; error?: string }; }
-    catch { payload = {} as T & { ok?: boolean; error?: string }; }
-    if (!response.ok || payload.ok === false) throw new Error(payload.error || `请求失败（${response.status}）`);
+    try {
+      payload = JSON.parse(raw) as T & { ok?: boolean; error?: string };
+    } catch {
+      payload = {} as T & { ok?: boolean; error?: string };
+    }
+    if (!response.ok || payload.ok === false)
+      throw new Error(payload.error || `请求失败（${response.status}）`);
     return payload;
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw new Error('网络连接超时，请点击“重新上传”。');
+    if (error instanceof DOMException && error.name === 'AbortError')
+      throw new Error('网络连接超时，请点击“重新上传”。');
     throw error;
   } finally {
     window.clearTimeout(timer);
@@ -224,9 +237,11 @@ async function uploadCloudRecording(ticket: CloudUploadTicket, blob: Blob) {
       body: blob,
       signal: controller.signal,
     });
-    if (!response.ok) throw new Error(`第${ticket.round}轮录音上传失败，请重试。`);
+    if (!response.ok)
+      throw new Error(`第${ticket.round}轮录音上传失败，请重试。`);
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw new Error(`第${ticket.round}轮录音上传超时，请检查网络后重试。`);
+    if (error instanceof DOMException && error.name === 'AbortError')
+      throw new Error(`第${ticket.round}轮录音上传超时，请检查网络后重试。`);
     throw error;
   } finally {
     window.clearTimeout(timer);
@@ -292,11 +307,11 @@ export function SpeakingLab({
   const [stage, setStage] = useState<Stage>('shadow');
   const [shadowSceneId, setShadowSceneId] = useState<SceneId>('dormitory');
   const [sceneId, setSceneId] = useState<SceneId>('dormitory');
-  const [profile, setProfile] = useState<Profile>({
-    name: '',
-    studentId: '',
-    className: '',
-  });
+  const [profile, setProfile] = useState<Profile>(() => ({
+    name: getCourseStudent()?.name || '',
+    studentId: getCourseStudent()?.studentNumber || '',
+    className: getCourseStudent()?.className || '',
+  }));
   const [recordingConsent, setRecordingConsent] = useState(false);
   const [turn, setTurn] = useState(0);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -717,22 +732,30 @@ export function SpeakingLab({
     [releaseStream],
   );
 
-  const beginPractice = useCallback((nextSceneId: SceneId) => {
-    const nextScene =
-      scenes.find((item) => item.id === nextSceneId) ?? scenes[0];
-    setSceneId(nextSceneId);
-    setTurn(0);
-    setMessages([{ role: 'partner', text: nextScene.opening }]);
-    setDraft('');
-    setPendingClip(null);
-    setRecordings([]);
-    setScores([]);
-    setAttemptCount(0);
-    setSubmission(null);
-    setStartedAt(Date.now());
-    setStage('practice');
-    speak(nextScene.opening);
-  }, []);
+  const beginPractice = useCallback(
+    (nextSceneId: SceneId) => {
+      rememberCourseStudent({
+        name: profile.name,
+        className: profile.className,
+        studentNumber: profile.studentId,
+      });
+      const nextScene =
+        scenes.find((item) => item.id === nextSceneId) ?? scenes[0];
+      setSceneId(nextSceneId);
+      setTurn(0);
+      setMessages([{ role: 'partner', text: nextScene.opening }]);
+      setDraft('');
+      setPendingClip(null);
+      setRecordings([]);
+      setScores([]);
+      setAttemptCount(0);
+      setSubmission(null);
+      setStartedAt(Date.now());
+      setStage('practice');
+      speak(nextScene.opening);
+    },
+    [profile],
+  );
 
   const sendAnswer = useCallback(() => {
     if (!pendingClip || isCloudRecognizing) return;
@@ -827,9 +850,16 @@ export function SpeakingLab({
           })),
         });
         for (let index = 0; index < ordered.length; index += 1) {
-          const ticket = prepared.uploads.find((item) => item.round === ordered[index].round);
-          if (!ticket) throw new Error(`第${ordered[index].round}轮录音缺少上传凭证，请重试。`);
-          setUploadMessage(`正在上传第 ${index + 1} / ${ordered.length} 轮录音……`);
+          const ticket = prepared.uploads.find(
+            (item) => item.round === ordered[index].round,
+          );
+          if (!ticket)
+            throw new Error(
+              `第${ordered[index].round}轮录音缺少上传凭证，请重试。`,
+            );
+          setUploadMessage(
+            `正在上传第 ${index + 1} / ${ordered.length} 轮录音……`,
+          );
           await uploadCloudRecording(ticket, ordered[index].blob);
         }
         setUploadMessage('三段录音已上传，正在保存成绩……');
@@ -1077,7 +1107,13 @@ export function SpeakingLab({
                       />
                     </label>
                   ))}
-                  <StudentClassField value={profile.className} onChange={(className) => setProfile({ ...profile, className })} theme="speaking" />
+                  <StudentClassField
+                    value={profile.className}
+                    onChange={(className) =>
+                      setProfile({ ...profile, className })
+                    }
+                    theme="speaking"
+                  />
                 </div>
                 <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl bg-[#edf6f8] p-4 text-sm leading-6 text-[#315f6b]">
                   <input
@@ -1373,13 +1409,13 @@ export function SpeakingLab({
             >
               {isUploading ? (
                 <span className="inline-flex items-center gap-2">
-                  <UploadCloud className="h-5 w-5" />{' '}
-                  {uploadMessage}
+                  <UploadCloud className="h-5 w-5" /> {uploadMessage}
                 </span>
               ) : submission?.ok ? (
                 '已同步给教师，老师可以查看文字、评分并回听录音。'
               ) : (
-                (submission?.error ?? '三段录音已保留，请点击下方“上传给老师”。')
+                (submission?.error ??
+                '三段录音已保留，请点击下方“上传给老师”。')
               )}
             </div>
             <div className="mt-5 flex flex-wrap justify-center gap-3">
