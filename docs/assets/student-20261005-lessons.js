@@ -1,0 +1,1 @@
+import'data:text/javascript,"assets/student-20261005-lessons.js";if(!import.meta.resolve)throw Error("import.meta.resolve not supported")';export function __vite_legacy_guard(){import.meta.url,import("_").catch(()=>1),async function*(){}().next()}import"./chunks/school-class-filter-20261005-lessons.js";import"./chunks/main-20261005-lessons.js";

@@ -1,5 +1,6 @@
 import { sitePath } from './api';
 import { clearCourseIdentity, getCourseIdentity } from './course-session';
+import { type CourseProgress } from './course-board';
 
 export const ARCHIVE_API_URL =
   'https://cloudbase-d3gxxe4l88c3d5907-1431364187.ap-shanghai.app.tcloudbase.com/learningArchiveApi';
@@ -146,6 +147,7 @@ export type ArchiveSnapshot = {
   goals?: string;
 };
 export type StudentArchiveData = {
+  courseProgress?: CourseProgress;
   unit2?: Unit2Summary;
   student: { id: string; name: string; className: string };
   profile: {

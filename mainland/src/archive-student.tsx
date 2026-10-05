@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
-  BookOpen,
   CheckCircle2,
-  ClipboardList,
   Compass,
   Headphones,
   Home,
@@ -42,6 +40,7 @@ import {
   studentReturnUrl,
 } from './course-session';
 import { Unit2Panel } from './unit2-panel';
+import { CourseBoard } from './course-board';
 
 const skillKeys = Object.keys(SKILL_LABELS) as Array<keyof typeof SKILL_LABELS>;
 const date = (value?: number | null) =>
@@ -116,7 +115,7 @@ export function ArchiveStudent() {
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState('portrait');
+  const [tab, setTab] = useState('path');
   const [avatar, setAvatar] = useState<'explorer' | 'engineer'>(() =>
     localStorage.getItem('july.archive.avatar') === 'engineer'
       ? 'engineer'
@@ -305,15 +304,11 @@ export function ArchiveStudent() {
   );
   const tasks = data?.tasks || feed.tasks || [];
   const news = data?.news || feed.news || [];
-  const doneIds = new Set(
-    records.filter((row) => row.taskId).map((row) => row.taskId),
-  );
-  const pendingTasks = tasks.filter((task) => !doneIds.has(task.id));
   const wordRecords = records.filter((row) => row.type === 'word');
   const speakingRecords = records.filter((row) => row.type === 'speaking');
   const tabs = [
+    { id: 'path', label: '课程与成绩', icon: Map },
     { id: 'portrait', label: '我的画像', icon: UserRound },
-    { id: 'path', label: '学习路径', icon: Map },
     { id: 'works', label: '作品与反馈', icon: Headphones },
     { id: 'news', label: '铁路英语窗', icon: TrainFront },
   ];
@@ -525,8 +520,8 @@ export function ArchiveStudent() {
           <section className="archive-hello">
             <div>
               <span className="archive-eyebrow">MY LEARNING PASSPORT</span>
-              <h1>{data.student.name}，欢迎回到你的成长线路</h1>
-              <p>{data.student.className} · 每一次练习都值得被看见</p>
+              <h1>{data.student.name}的学习档案</h1>
+              <p>{data.student.className}</p>
             </div>
             <button
               className="archive-secondary"
@@ -557,7 +552,10 @@ export function ArchiveStudent() {
           </nav>
           {tab === 'portrait' && (
             <>
-              <Unit2Panel data={data.unit2} />
+              <details>
+                <summary>Unit 1 · 第2课作答明细</summary>
+                <Unit2Panel data={data.unit2} />
+              </details>
               <section className="archive-portrait-grid">
                 <article className="archive-card archive-avatar-card">
                   <span className="archive-eyebrow">MY LEARNING COMPANION</span>
@@ -694,98 +692,25 @@ export function ArchiveStudent() {
           )}
           {tab === 'path' && (
             <>
-              <Unit2Panel data={data.unit2} />
-              <div className="archive-section-heading">
-                <div>
-                  <span className="archive-eyebrow">YOUR NEXT STATION</span>
-                  <h2>本周与本单元任务</h2>
-                  <p>教师发布后更新；按单元和课次累积，不替换旧课。</p>
-                </div>
-                <span className="archive-tag">
-                  {pendingTasks.length} 项未记录完成
-                </span>
-              </div>
-              <div className="archive-task-list">
-                {tasks.length ? (
-                  [...tasks]
-                    .sort((a, b) =>
-                      `${a.unit} ${a.lesson}`.localeCompare(
-                        `${b.unit} ${b.lesson}`,
-                        'zh-CN',
-                        { numeric: true },
-                      ),
-                    )
-                    .map((task) => (
-                      <article
-                        className="archive-card archive-task"
-                        key={task.id}
-                      >
-                        <div className="archive-station-dot">
-                          {doneIds.has(task.id) ? (
-                            <CheckCircle2 />
-                          ) : (
-                            <BookOpen />
-                          )}
-                        </div>
-                        <div>
-                          <small>
-                            {task.unit || '学期主线'} ·{' '}
-                            {task.lesson || '持续学习'} ·{' '}
-                            {task.creatorName || task.teacherName || '课程教师'}
-                          </small>
-                          <h3>{task.title}</h3>
-                          <p>{task.description}</p>
-                          <span className="archive-small">
-                            {task.dueAt
-                              ? `截止 ${date(task.dueAt)}`
-                              : '未设置截止时间'}{' '}
-                            ·{' '}
-                            {doneIds.has(task.id)
-                              ? '已有提交记录，可再次练习'
-                              : task.type === 'quiz'
-                                ? '等待完成'
-                                : '外部任务完成情况以原页面记录为准'}
-                          </span>
-                        </div>
-                        <button
-                          className="archive-primary"
-                          disabled={
-                            task.type !== 'quiz' && !safeHref(task.href)
-                          }
-                          onClick={() => openTask(task)}
-                        >
-                          {task.type === 'quiz' ? '开始小测' : '进入任务'}
-                          <ArrowRight size={16} />
-                        </button>
-                      </article>
-                    ))
-                ) : (
-                  <div className="archive-empty">
-                    <ClipboardList />
-                    <h3>老师还没有发布新的档案馆任务</h3>
-                    <p>
-                      原来的三个练习入口仍然可以使用。新任务发布后点击刷新即可看到。
-                    </p>
-                  </div>
-                )}
-              </div>
-              <LegacyLinks />
-              <section className="archive-card">
-                <h3>我的成长时间线</h3>
-                {snapshots.length ? (
-                  <ol className="archive-timeline">
-                    {snapshots.map((snapshot) => (
-                      <li key={snapshot.id}>
-                        <time>{date(snapshot.createdAt)}</time>
-                        <strong>阶段自评</strong>
-                        <p>{snapshot.goals || '记录了七项英语学习感受'}</p>
-                      </li>
-                    ))}
-                  </ol>
-                ) : (
-                  <p>完成第一次阶段自评，让以后的自己有迹可循。</p>
-                )}
-              </section>
+              <CourseBoard
+                tasks={tasks}
+                progress={data.courseProgress}
+                onOpen={openTask}
+              />
+              <details className="archive-card">
+                <summary>Unit 1 · 第2课作答与雷达明细</summary>
+                <Unit2Panel data={data.unit2} links={false} />
+              </details>
+              <details className="archive-card">
+                <summary>阶段自评记录 · {snapshots.length}次</summary>
+                {snapshots.map((snapshot) => (
+                  <p key={snapshot.id}>
+                    {date(snapshot.createdAt)} ·{' '}
+                    {snapshot.goals || '已完成能力自评'}
+                  </p>
+                ))}
+                {!snapshots.length && <p>暂无阶段自评。</p>}
+              </details>
             </>
           )}
           {tab === 'works' && <Portfolio records={records} />}

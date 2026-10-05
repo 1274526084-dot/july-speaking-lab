@@ -2,6 +2,78 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createApi, PROJECT_ID, COLLECTIONS: C, LEGACY, hash } = require('../service');
 const { gradeUnit2, unit2Summary } = require('../unit2');
+const { lessonProgress, courseCatalog } = require('../course');
+
+test('units persist three lessons and current lesson without changing existing student data', async () => {
+  const f = fixture({ [LEGACY.words]: [word('original-word')] });
+  const before = JSON.stringify(f.db.rows(LEGACY.words));
+  const initial = await f.call('publicFeed');
+  assert.deepEqual(initial.current, { unit: 1, lesson: 2 });
+  assert.deepEqual(initial.units[0].lessons, [1, 2, 3]);
+  assert.equal((await f.call('saveCourseUnit', { number: 2, title: 'Transport' })).status, 401);
+  assert.equal((await f.call('saveCourseUnit', { token: f.tokens.lisa, number: 2, title: 'Transport' })).unit.number, 2);
+  assert.equal((await f.call('saveCourseUnit', { token: f.tokens.alice, number: 2, title: 'Overwrite' })).status, 403);
+  assert.equal((await f.call('setCurrentLesson', { token: f.tokens.july, unit: 2, lesson: 4 })).status, 400);
+  assert.equal((await f.call('setCurrentLesson', { token: f.tokens.july, unit: 3, lesson: 1 })).status, 400);
+  await f.call('setCurrentLesson', { token: f.tokens.july, unit: 2, lesson: 3 });
+  const feed = await f.call('publicFeed');
+  assert.deepEqual(feed.current, { unit: 2, lesson: 3 });
+  assert.equal(feed.units.find(unit => unit.number === 2).title, 'Transport');
+  assert.equal(JSON.stringify(f.db.rows(LEGACY.words)), before);
+  assert.ok(!('students' in feed));
+});
+
+test('lesson progress compares repeats of the same task/version and never invents missing scores', () => {
+  const report = lessonProgress({
+    unit2: [{ activity: 'pinglu', title: '测试', score: 0, created_at: 1 }, { activity: 'pinglu', title: '测试', score: 60, created_at: 2 }, { activity: 'tense', title: '时态', score: 100, created_at: 3 }],
+    words: [word('unknown-course')],
+    quizzes: [{ task_id: 'q', unit: 'Unit 2', lesson: 'Lesson 1', task_version: 'old', score: 0, created_at: 1 }, { task_id: 'q', unit: 'Unit 2', lesson: 'Lesson 1', task_version: 'new', score: 100, created_at: 2 }],
+  });
+  const lesson = report.lessons.find(item => item.unit === 1 && item.lesson === 2);
+  assert.equal(lesson.first, 50); assert.equal(lesson.latest, 80);
+  assert.equal(lesson.change, 60); // NOT 100 from a different task.
+  assert.equal(lesson.comparableTasks, 1);
+  assert.equal(report.lessons.find(item => item.unit === 2).change, null);
+  assert.equal(report.lessons.some(item => item.lesson === 3), false);
+  assert.equal(report.unassignedWordCount, 1);
+  assert.equal(courseCatalog([]).units[0].number, 1);
+});
+
+test('student lesson scores remain private, teacher scores are class bound, and submissions retain lesson snapshots', async () => {
+  const f = fixture({ [LEGACY.speaking]: [{ id: 'same', project_id: PROJECT_ID, student_name: '张同学', class_name: '26-城轨信号54班', student_id: 's1', scene_id: 'dorm', total_score: 70, submitted_at: 1 }] });
+  const auth = await f.authorize();
+  const other = await f.authorize('另外同学');
+  assert.equal((await f.call('courseStudentScores', { studentToken: 'f'.repeat(64) })).status, 401);
+  assert.equal((await f.call('courseStudentScores', { studentToken: other.studentToken })).courseProgress.lessons.length, 0);
+  const task = (await f.call('saveTask', { token: f.tokens.july, task: quiz({ lesson: 'Lesson 2' }) })).task;
+  await f.call('submitQuiz', { studentToken: auth.studentToken, taskId: task.id, taskVersion: task.version, requestId: 'lesson-score-0001', answers: [0,1] });
+  assert.equal(f.db.rows(C.submissions)[0].lesson, 'Lesson 2');
+  assert.equal((await f.call('saveTask', { token: f.tokens.july, task: { ...task, lesson: 'Lesson 3' } })).status, 409);
+  const result = await f.call('courseStudentScores', { studentToken: auth.studentToken });
+  assert.ok(result.courseProgress.lessons.some(item => item.unit === 1 && item.lesson === 2 && item.latest === 100));
+  assert.ok(!result.courseProgress.lessons.some(item => item.lesson === 3));
+  assert.equal((await f.call('teacherCourseScores', { token: f.tokens.alice })).students.length, 2);
+});
+
+test('word share codes attach repeats to one lesson only, without editing raw grades or foreign units', async () => {
+  const original = [word('w1', '张同学', '26-城轨信号54班', { average_score: 40, submitted_at: 1 }), word('w2', '张同学', '26-城轨信号54班', { average_score: 80, submitted_at: 2 })];
+  const f = fixture({ [LEGACY.words]: original, word_units: [{ id: 'unit1', project_id: PROJECT_ID, share_code: 'ABC123' }, { id: 'foreign', project_id: 'malaysia', share_code: 'ABC123' }] });
+  const task = (await f.call('saveTask', { token: f.tokens.july, task: quiz({ type: 'word', questions: [], lesson: 'Lesson 3', href: 'https://1274526084-dot.github.io/july-speaking-lab/words/?unit=ABC123' }) })).task;
+  const dashboard = await f.call('teacherCourseScores', { token: f.tokens.july });
+  const progress = dashboard.students[0].courseProgress;
+  assert.equal(progress.lessons[0].lesson, 3);
+  assert.equal(progress.lessons[0].change, 40);
+  assert.equal(progress.lessons[0].latest, 80);
+  assert.equal(progress.unassignedWordCount, 0);
+  assert.deepEqual(f.db.rows(LEGACY.words), original);
+  assert.equal((await f.call('saveTask', { token: f.tokens.july, task: { ...task, href: 'https://example.com/?unit=OTHER' } })).status, 409);
+  const draft = (await f.call('saveTask', { token: f.tokens.july, task: { ...task, status: 'draft' } })).task;
+  assert.equal((await f.call('saveTask', { token: f.tokens.july, task: { ...draft, lesson: 'Lesson 1' } })).status, 409);
+  await f.call('saveTask', { token: f.tokens.july, task: quiz({ type: 'word', questions: [], lesson: 'Lesson 2', href: task.href }) });
+  const ambiguous = await f.call('teacherCourseScores', { token: f.tokens.july });
+  assert.equal(ambiguous.students[0].courseProgress.unassignedWordCount, 2);
+  assert.equal(ambiguous.students[0].courseProgress.lessons.length, 0);
+});
 
 test('school reclassification persists only reversible project mappings, never grades, audio or foreign data', async () => {
   const original = { [LEGACY.words]: [word('own', '张三26-城轨信号54班', '城轨信号2654'), word('unknown-a', '李四', '68班'), word('unknown-b', '李四', '69班'), word('foreign', '重要学生', '城轨信号54班', { project_id: 'malaysia' }), word('malaysia-tagged', '重要学生', '城轨信号54班', { country: 'Malaysia' })] };

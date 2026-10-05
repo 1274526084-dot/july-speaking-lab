@@ -3,6 +3,7 @@ const { createHash, randomBytes, randomUUID, randomInt, timingSafeEqual } = requ
 const { createSchoolClassDirectory: createClassDirectory, projectSchoolRecord, CLASS_NORMALIZATION_VERSION } = require('./school-classes');
 const { CLASS_CATALOG } = require('./class-catalog');
 const { gradeUnit2, unit2Summary } = require('./unit2');
+const { position, courseCatalog, lessonProgress } = require('./course');
 
 const PROJECT_ID = 'lzrtc-public-english-2026';
 const TEACHERS = new Set(['cherie', 'lisa', 'alice', 'july']);
@@ -14,6 +15,7 @@ const COLLECTIONS = Object.freeze({
   submissions: 'english_archive_quiz_submissions', rates: 'english_archive_rates',
   unit2: 'english_archive_unit2_attempts',
   classNormalization: 'english_archive_class_normalization',
+  courseUnits: 'english_archive_course_units',
 });
 const LEGACY = Object.freeze({ profiles: 'english_learning_profiles', words: 'word_attempts', speaking: 'speaking_attempts' });
 const DAY = 24 * 60 * 60 * 1000;
@@ -101,7 +103,7 @@ function publicTask(row, teacher = false) {
   return {
     id: row.id || row._id, title: row.title, unit: row.unit || '', lesson: row.lesson || '', type: row.type,
     description: row.description || '', href: row.href || '', classes: row.classes || [], dueAt: row.due_at ?? null,
-    status: row.status, material: row.material || '', creator: row.creator, creatorName: row.creator_name,
+    status: row.status, courseLocked: Boolean(row.course_locked || row.status === 'published'), material: row.material || '', creator: row.creator, creatorName: row.creator_name,
     createdAt: row.created_at, updatedAt: row.updated_at, version: row.version ?? row.updated_at,
     questions: (row.questions || []).map(question => ({ id: question.id, prompt: question.prompt, options: question.options, ...(teacher ? { answer: question.answer, explanation: question.explanation } : {}) })),
   };
@@ -227,9 +229,15 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
   async function datasets() {
     const startedAt = Date.now();
     const names = ['profiles', 'words', 'speaking', 'students', 'reflections', 'submissions', 'tasks', 'news', 'unit2'];
-    const result = await Promise.all(names.map(key => read(LEGACY[key] || COLLECTIONS[key], LEGACY[key] ? {} : { project_id: PROJECT_ID }, Boolean(LEGACY[key]))));
+    const [result, wordUnits] = await Promise.all([
+      Promise.all(names.map(key => read(LEGACY[key] || COLLECTIONS[key], LEGACY[key] ? {} : { project_id: PROJECT_ID }, Boolean(LEGACY[key])))),
+      read('word_units', {}, true),
+    ]);
     const data = { hasMore: result.some(item => item.hasMore), incompleteCollections: names.filter((_, i) => result[i].hasMore), scans: Object.fromEntries(names.map((key, index) => [key, { scanned: result[index].rows.length, total: result[index].totalCount, pages: result[index].pages, elapsedMs: result[index].elapsedMs }])) };
     names.forEach((key, index) => { data[key] = LEGACY[key] ? result[index].rows.filter(row => scoped(row, key) && (key !== 'words' || row.status === 'completed')).map(projectSchoolRecord) : result[index].rows.filter(tagged); });
+    // Read only the same domestic units accepted by wordLab. No unit or audio is rewritten.
+    data.wordUnits = wordUnits.rows.filter(row => !foreign(row) && (tagged(row) || (!row.project_id && row.teacher_id && row.share_code && typeof row.words_json === 'string')));
+    if (wordUnits.hasMore) { data.hasMore = true; data.incompleteCollections.push('wordUnits'); }
     // The directory uses class/major evidence, not student or attempt counts.
     // Keep EVERY distinct pair, including ambiguous spellings; duplicate rows
     // cannot add identity evidence and made packed-class parsing quadratic.
@@ -343,12 +351,17 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     const words = history.filter(row => row.type === 'word'), speaking = history.filter(row => row.type === 'speaking'), quizzes = history.filter(row => row.type === 'quiz');
     return { historyCount: history.length, wordCount: words.length, speakingCount: speaking.length, quizCount: quizzes.length, wordAverage: mean(words), speakingAverage: mean(speaking), quizAverage: mean(quizzes), lastActive: Math.max(0, ...history.map(row => row.submittedAt), ...reflections.map(row => row.created_at)), reflectionCount: reflections.length };
   }
+  function courseProgressFor(student, data) {
+    const tasks = data.tasks.filter(task => assigned(task, student, data));
+    return lessonProgress({ words: legacyRows('words', student, data), wordUnits: data.wordUnits, speaking: legacyRows('speaking', student, data), unit2: archiveRows('unit2', student, data), quizzes: archiveRows('submissions', student, data), tasks });
+  }
   function studentSummary(student, data, includeProfiles) {
     const words = legacyRows('words', student, data), speaking = legacyRows('speaking', student, data);
     const profiles = includeProfiles ? legacyRows('profiles', student, data) : [];
     const quizzes = archiveRows('submissions', student, data), reflections = archiveRows('reflections', student, data);
     const unit2 = archiveRows('unit2', student, data);
     return {
+      courseProgress: courseProgressFor(student, data),
       unit2: unit2Summary(unit2),
       historyCount: words.length + speaking.length + profiles.length + quizzes.length + unit2.length,
       wordCount: words.length, speakingCount: speaking.length, quizCount: quizzes.length,
@@ -365,6 +378,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     const unit2 = unit2Summary(archiveRows('unit2', student, data));
     const output = { student: publicStudent(student), profile: includeProfiles ? publicProfile(profileFor(student, data)) : null, profileRestricted: !includeProfiles, history: await signedAudio(history), tasks: data.tasks.filter(row => row.status === 'published' && assigned(row, student, data)).map(row => publicTask(row)), news: data.news.filter(row => row.status === 'published').map(publicNews).sort((a, b) => b.updatedAt - a.updatedAt), snapshots: reflections.map(row => ({ id: row.id, createdAt: row.created_at, skills: row.skills, goals: row.goals })), summary: summaryFor(history, reflections), hasMore: data.hasMore, warnings: data.hasMore ? ['记录数量超过本次读取上限，显示结果可能不完整，请联系管理员分批导出。'] : [], audioExpiresAt: now() + AUDIO_SECONDS * 1000 };
     output.unit2 = unit2;
+    output.courseProgress = courseProgressFor(student, data);
     if (isTeacher) {
       output.identityConflict = identityConflict(student, data);
       if (output.identityConflict) output.warnings.push('同班同名记录出现不同学号，学生访问已暂停。请先核对原始记录；系统不会猜测或合并身份。');
@@ -377,6 +391,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
   function validateTask(value) {
     const task = value || {};
     const title = requiredText(task.title, '任务名称', 160);
+    if (!position(task.unit, task.lesson)) fail(400, '请选择 Unit 1–30 和第1、2或3课。');
     if (!['word', 'speaking', 'reading', 'listening', 'writing', 'quiz', 'link'].includes(task.type)) fail(400, '请选择有效的任务类型。');
     if (!['draft', 'published'].includes(task.status)) fail(400, '请选择草稿或发布状态。');
     if (!Array.isArray(task.classes) || task.classes.length > 50 || task.classes.some(item => typeof item !== 'string' || !item.trim() || item.length > 100)) fail(400, '班级格式不正确，最多选择50个班级。');
@@ -410,7 +425,9 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       const existing = await get(COLLECTIONS[kind], id, tx);
       if (value?.id && !tagged(existing)) fail(404, '没有找到这条内容。');
       if (existing && existing.creator !== staff.code && staff.code !== 'july') fail(403, '只能修改自己创建的内容；可以复制后再编辑。');
-      const saved = { id, project_id: PROJECT_ID, ...clean, creator: existing?.creator || staff.code, creator_name: existing?.creator_name || staff.name, created_at: existing?.created_at || now(), updated_at: now(), updated_by: staff.code, ...(kind === 'tasks' ? { version: randomUUID() } : {}) };
+      const locked = existing?.course_locked || existing?.status === 'published';
+      if (kind === 'tasks' && locked && (existing.unit !== clean.unit || existing.lesson !== clean.lesson || existing.type !== clean.type || (existing.type === 'word' && existing.href !== clean.href))) fail(409, '已发布任务的课次、类型和跟读链接不可替换；请新建任务，已有成绩继续保留。');
+      const saved = { id, project_id: PROJECT_ID, ...clean, creator: existing?.creator || staff.code, creator_name: existing?.creator_name || staff.name, created_at: existing?.created_at || now(), updated_at: now(), updated_by: staff.code, ...(kind === 'tasks' ? { version: randomUUID(), course_locked: Boolean(locked || clean.status === 'published') } : {}) };
       await put(COLLECTIONS[kind], id, saved, tx);
       return saved;
     });
@@ -420,9 +437,10 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     const action = text(body.action, 40);
     if (body.projectId && body.projectId !== PROJECT_ID) fail(400, '项目不匹配。');
     if (action === 'publicFeed') {
-      await rate(event, 'feed', 180);
+      await rate(event, 'feed', 1800);
       const [tasks, news] = await Promise.all(['tasks', 'news'].map(key => read(COLLECTIONS[key], { project_id: PROJECT_ID, status: 'published' })));
-      return { tasks: tasks.rows.filter(tagged).map(row => publicTask(row)), news: news.rows.filter(tagged).map(publicNews).sort((a, b) => b.updatedAt - a.updatedAt), hasMore: tasks.hasMore || news.hasMore };
+      const courses = await read(COLLECTIONS.courseUnits, { project_id: PROJECT_ID });
+      return { ...courseCatalog(courses.rows, tasks.rows), tasks: tasks.rows.filter(tagged).map(row => publicTask(row)), news: news.rows.filter(tagged).map(publicNews).sort((a, b) => b.updatedAt - a.updatedAt), hasMore: tasks.hasMore || news.hasMore || courses.hasMore };
     }
     if (action === 'requestAccess') {
       await rate(event, 'request-access', 300);
@@ -453,7 +471,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
         return { status: 'approved', studentToken, student: publicStudent(student), expiresAt: session.expires_at };
       } catch (error) { if (error.status === 401) return { status: 'revoked' }; throw error; }
     }
-    if (['studentDashboard', 'saveReflection', 'submitQuiz', 'studentLogout', 'saveUnit2Attempt', 'unit2Dashboard', 'courseSession'].includes(action)) {
+    if (['studentDashboard', 'saveReflection', 'submitQuiz', 'studentLogout', 'saveUnit2Attempt', 'unit2Dashboard', 'courseSession', 'courseStudentScores'].includes(action)) {
       const auth = await studentSession(body.studentToken);
       const { student, session } = auth;
       await rate(event, action, action === 'studentDashboard' ? 90 : 30, 15 * 60 * 1000, student.id);
@@ -462,6 +480,11 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
         return {};
       }
       if (action === 'courseSession') return { student: publicStudent(student), expiresAt: Math.min(session.expires_at, now() + 2 * 60 * 60 * 1000) };
+      if (action === 'courseStudentScores') {
+        const data = await datasets();
+        if (data.hasMore || identityConflict(student, data)) fail(409, '记录或身份待核对，暂不显示可能不完整的成绩。');
+        return { student: publicStudent(student), courseProgress: courseProgressFor(student, data) };
+      }
       if (action === 'saveUnit2Attempt') {
         const requestId = requiredText(body.requestId, '提交编号', 100);
         if (!/^[a-zA-Z0-9_-]{8,100}$/.test(requestId)) fail(400, '提交编号不正确。');
@@ -513,17 +536,39 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
         if (!task.questions?.length || answers.length !== task.questions.length) fail(400, '请完成所有题目。');
         const feedback = task.questions.map((question, index) => ({ id: question.id, prompt: question.prompt, options: question.options, selected: answers[index], answer: question.answer, correct: answers[index] === question.answer, explanation: question.explanation || '' }));
         const correct = feedback.filter(item => item.correct).length;
-        const row = { id, project_id: PROJECT_ID, student_id: student.id, task_id: taskId, task_title: task.title, task_updated_at: task.updated_at, task_version: task.version ?? task.updated_at, request_id: requestId, answers, feedback, total: feedback.length, correct, score: Math.round(correct / feedback.length * 100), created_at: now() };
+        const row = { id, project_id: PROJECT_ID, student_id: student.id, task_id: taskId, task_title: task.title, unit: task.unit, lesson: task.lesson, task_updated_at: task.updated_at, task_version: task.version ?? task.updated_at, request_id: requestId, answers, feedback, total: feedback.length, correct, score: Math.round(correct / feedback.length * 100), created_at: now() };
         await put(COLLECTIONS.submissions, id, row, tx);
         return row;
       });
       return { submission: { id: submitted.id, taskId: submitted.task_id, taskVersion: submitted.task_version ?? submitted.task_updated_at, score: submitted.score, correct: submitted.correct, total: submitted.total, submittedAt: submitted.created_at, feedback: submitted.feedback }, score: submitted.score, feedback: submitted.feedback };
     }
-    const teacherActions = ['teacherDashboard', 'teacherStudent', 'listAccessRequests', 'approveAccess', 'rejectAccess', 'revokeDevice', 'saveTask', 'saveNews', 'teacherSession', 'normalizeClasses'];
+    const teacherActions = ['teacherDashboard', 'teacherStudent', 'listAccessRequests', 'approveAccess', 'rejectAccess', 'revokeDevice', 'saveTask', 'saveNews', 'teacherSession', 'normalizeClasses', 'courseFeed', 'saveCourseUnit', 'setCurrentLesson', 'teacherCourseScores'];
     if (!teacherActions.includes(action)) fail(404, '未知操作。');
     const staff = await teacher(body.token);
     await rate(event, action, action === 'approveAccess' ? 100 : 180, 15 * 60 * 1000, staff.code);
     if (action === 'teacherSession') return { code: staff.code, name: staff.name };
+    if (action === 'courseFeed') {
+      const [courses, tasks] = await Promise.all([read(COLLECTIONS.courseUnits, { project_id: PROJECT_ID }), read(COLLECTIONS.tasks, { project_id: PROJECT_ID })]);
+      return { teacher: staff, ...courseCatalog(courses.rows, tasks.rows), tasks: tasks.rows.map(row => publicTask(row, true)), hasMore: courses.hasMore || tasks.hasMore };
+    }
+    if (action === 'saveCourseUnit') {
+      if (!Number.isInteger(body.number) || body.number < 1 || body.number > 30) fail(400, '单元编号须为1–30。');
+      const id = `course-unit-${body.number}`;
+      const unit = await db.runTransaction(async tx => {
+        const old = await get(COLLECTIONS.courseUnits, id, tx);
+        if (old && (!tagged(old) || (old.creator !== staff.code && staff.code !== 'july'))) fail(403, '该单元由另一位老师创建。');
+        const row = { id, project_id: PROJECT_ID, kind: 'unit', number: body.number, title: text(body.title, 100), lessons: [1, 2, 3], creator: old?.creator || staff.code, creator_name: old?.creator_name || staff.name, updated_at: now() };
+        await put(COLLECTIONS.courseUnits, id, row, tx); return row;
+      });
+      return { unit: courseCatalog([unit]).units.find(item => item.number === body.number) };
+    }
+    if (action === 'setCurrentLesson') {
+      const at = position(body.unit, body.lesson);
+      if (!at) fail(400, '请选择有效单元及第1–3课。');
+      if (at.unit !== 1 && !tagged(await get(COLLECTIONS.courseUnits, `course-unit-${at.unit}`))) fail(400, '请先创建这个单元。');
+      await put(COLLECTIONS.courseUnits, 'course-current', { id: 'course-current', project_id: PROJECT_ID, kind: 'current', ...at, updated_by: staff.code, updated_at: now() });
+      return { current: at };
+    }
     if (action === 'normalizeClasses') {
       if (staff.code !== 'july') fail(403, '仅 July 可以执行全量班级整理。');
       const scans = await Promise.all(Object.entries(LEGACY).map(async ([kind, collection]) => ({ kind, collection, scan: await read(collection, {}, true) })));
@@ -579,6 +624,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       datasets(), action === 'teacherDashboard' ? read(COLLECTIONS.requests, { project_id: PROJECT_ID }) : Promise.resolve(null),
     ]);
     const students = allStudents(data);
+    if (action === 'teacherCourseScores') return { students: [...students.values()].map(student => ({ ...publicStudent(student), courseProgress: courseProgressFor(student, data) })), hasMore: data.hasMore };
     if (action === 'teacherDashboard') {
       const requests = requestScan;
       const includeProfiles = staff.code === 'july';

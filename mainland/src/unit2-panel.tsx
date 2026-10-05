@@ -49,9 +49,8 @@ export function Unit2Panel({
     <section className="unit2-panel">
       <div className="unit2-heading">
         <div>
-          <small>UNIT 2 · 第二课学习站</small>
-          <h2>从平陆运河，到校园里的第一份温暖</h2>
-          <p>按顺序完成四项任务，成绩和作文会同步到你的档案及教师端。</p>
+          <small>UNIT 1 · 第2课</small>
+          <h2>本课作答明细</h2>
         </div>
         <span>{data?.completed || 0} / 4 项完成</span>
       </div>

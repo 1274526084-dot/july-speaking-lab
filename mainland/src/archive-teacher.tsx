@@ -33,7 +33,11 @@ import {
   useRef,
   useState,
 } from 'react';
-import { CLASS_CATALOG, SCHOOL_COLLEGES, collegeForClass } from '@/lib/class-catalog';
+import {
+  CLASS_CATALOG,
+  SCHOOL_COLLEGES,
+  collegeForClass,
+} from '@/lib/class-catalog';
 import { StudentClassField } from '@/components/student-class-field';
 import { createSchoolClassDirectory as createClassDirectory } from '@/lib/school-classes';
 import { SchoolClassFilter } from '@/components/school-class-filter';
@@ -47,9 +51,11 @@ import { RAILWAY_NEWS_SEEDS } from '@/lib/railway-news';
 import { getTeacherToken, sitePath } from './api';
 import { ArchiveError, archiveRequest, type Unit2Summary } from './archive-api';
 import { Unit2Panel } from './unit2-panel';
+import { CourseBoard } from './course-board';
+import { type ArchiveTask as CourseTask } from './archive-api';
 import { LearningAvatar, SkillRadar } from './archive-visuals';
 import { type EnglishProfile, SKILL_LABELS } from './profile-api';
-import { wordPath } from './word-api';
+import { getWordToken, wordPath, wordRequest } from './word-api';
 import './archive-teacher.css';
 
 type Tab = 'students' | 'unit2' | 'tasks' | 'news' | 'devices';
@@ -61,7 +67,7 @@ type TaskType =
   | 'writing'
   | 'quiz'
   | 'link';
-type ArchiveTask = {
+export type ArchiveTask = {
   id?: string;
   title: string;
   unit: string;
@@ -75,6 +81,7 @@ type ArchiveTask = {
   questions?: RailwayQuestion[];
   material?: string;
   createdAt?: number;
+  courseLocked?: boolean;
 };
 type ArchiveNews = {
   id?: string;
@@ -410,7 +417,11 @@ function Dialog({
 }
 
 export function ArchiveTeacher() {
-  const [tab, setTab] = useState<Tab>('students');
+  const [tab, setTab] = useState<Tab>(() =>
+    new URLSearchParams(location.search).get('tab') === 'unit2'
+      ? 'unit2'
+      : 'students',
+  );
   const [data, setData] = useState<Dashboard>({
     students: [],
     tasks: [],
@@ -425,9 +436,20 @@ export function ArchiveTeacher() {
   const [classFilter, setClassFilter] = useState('');
   const [collegeFilter, setCollegeFilter] = useState('');
   const [selected, setSelected] = useState<Student | null>(null);
+  const openedLinkedStudent = useRef(false);
+  useEffect(() => {
+    if (openedLinkedStudent.current) return;
+    const id = new URLSearchParams(location.search).get('student');
+    const student = data.students.find((row) => row.id === id);
+    if (student) {
+      openedLinkedStudent.current = true;
+      // Selection uses only the authorized teacher list, never a query-supplied identity.
+      // oxlint-disable-next-line react/react-compiler
+      setSelected(student);
+    }
+  }, [data.students]);
   const [taskEditor, setTaskEditor] = useState<ArchiveTask | null>(null);
   const [newsEditor, setNewsEditor] = useState<ArchiveNews | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const token = getTeacherToken();
   const teacherName =
     window.sessionStorage.getItem('july-english-hub.teacher-name') || 'Teacher';
@@ -454,7 +476,6 @@ export function ArchiveTeacher() {
         requests: payload.requests || [],
       });
       setError('');
-      setUpdatedAt(Date.now());
     } catch (requestError) {
       if (requestError instanceof ArchiveError && requestError.status === 401) {
         window.sessionStorage.removeItem('july-speaking-lab.teacher-token');
@@ -503,7 +524,8 @@ export function ArchiveTeacher() {
         (student) =>
           (!classFilter ||
             directory.resolve(classRow(student)).key === classFilter) &&
-          (!collegeFilter || directory.resolve(classRow(student)).college === collegeFilter) &&
+          (!collegeFilter ||
+            directory.resolve(classRow(student)).college === collegeFilter) &&
           (!query ||
             normalize(
               `${student.name}${student.rawName || ''}${student.className}${student.rawClassName || ''}${student.profile?.major || ''}`,
@@ -572,60 +594,16 @@ export function ArchiveTeacher() {
         </div>
       </header>
       <div className="at-shell">
-        <section className="at-hero">
+        <section className="at-section-heading">
           <div>
-            <p className="at-eyebrow">EVERY JOURNEY LEAVES A TRACE</p>
-            <h1>
-              让每一步成长，
-              <br />
-              <em>都有迹可循。</em>
-            </h1>
+            <h1>班级学习档案</h1>
             <p>
-              从第一份自评，到每一次开口。把班级进度、个人变化与下一课的任务放在一起。
+              {data.students.length}人 · {directory.groups.length}个班级
             </p>
-            <div className="at-hero-meta">
-              <span>
-                <ShieldCheck />
-                教师授权访问
-              </span>
-              <span>
-                {updatedAt ? `更新于 ${formatDate(updatedAt)}` : '正在读取档案'}
-              </span>
-            </div>
           </div>
-          <div className="at-hero-right">
-            <div className="at-route-label">
-              <span>LEARNING ROUTE</span>
-              <TrainFront />
-            </div>
-            <div className="at-route">
-              <span>认识自己</span>
-              <i />
-              <span>练习积累</span>
-              <i />
-              <span>看见成长</span>
-            </div>
-            <div className="at-hero-figure">
-              <strong>
-                {data.students.length.toString().padStart(2, '0')}
-              </strong>
-              <div>
-                份成长档案
-                <small>
-                  {directory.groups.length} 个归类班级 ·{' '}
-                  {
-                    data.tasks.filter((task) => task.status === 'published')
-                      .length
-                  }{' '}
-                  项已发布任务
-                </small>
-              </div>
-            </div>
-            <a href={sitePath('archive')} target="_blank" rel="noreferrer">
-              预览学生档案入口
-              <ArrowRight />
-            </a>
-          </div>
+          <a className="at-secondary" href={sitePath('workbench')}>
+            课程与每课成绩 →
+          </a>
         </section>
         <nav className="at-tabs" aria-label="教师档案功能">
           {(
@@ -695,7 +673,7 @@ export function ArchiveTeacher() {
             {tab === 'unit2' && (
               <section className="at-panel">
                 <div className="at-panel-heading">
-                  <h2>第二课 · 四站学习数据</h2>
+                  <h2>Unit 1 · 第2课作答明细</h2>
                   <span>每30秒自动更新</span>
                 </div>
                 <div className="at-filters">
@@ -705,7 +683,13 @@ export function ArchiveTeacher() {
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                   />
-                  <SchoolClassFilter college={collegeFilter} classKey={classFilter} groups={directory.groups} onCollege={setCollegeFilter} onClass={setClassFilter} />
+                  <SchoolClassFilter
+                    college={collegeFilter}
+                    classKey={classFilter}
+                    groups={directory.groups}
+                    onCollege={setCollegeFilter}
+                    onClass={setClassFilter}
+                  />
                 </div>
                 <div className="at-table-wrap">
                   <table className="at-table">
@@ -762,12 +746,63 @@ export function ArchiveTeacher() {
                   分数均换算为100分得分率。写作记录保留原文与规则评分依据；点击学生可查看本课雷达和所有尝试。
                 </p>
                 <section className="at-metrics">
-                  <Metric label="平陆运河首次均分" value={scoreText(average(students.map(student => student.unit2?.pretest)))} note="当前筛选班级 · 已提交学生" icon={<GraduationCap />} />
-                  <Metric label="动词最近均分" value={scoreText(average(students.map(student => student.unit2?.stages.verbs?.latest)))} note="当前筛选班级 · 已提交学生" icon={<BookOpen />} />
-                  <Metric label="时态最近均分" value={scoreText(average(students.map(student => student.unit2?.postPractice)))} note="当前筛选班级 · 已提交学生" icon={<ClipboardList />} />
-                  <Metric label="写作综合得分率" value={scoreText(average(students.map(student => student.unit2?.radar.writing)))} note="课堂与作文均完成的学生" icon={<FilePenLine />} />
+                  <Metric
+                    label="平陆运河首次均分"
+                    value={scoreText(
+                      average(
+                        students.map((student) => student.unit2?.pretest),
+                      ),
+                    )}
+                    note="当前筛选班级 · 已提交学生"
+                    icon={<GraduationCap />}
+                  />
+                  <Metric
+                    label="动词最近均分"
+                    value={scoreText(
+                      average(
+                        students.map(
+                          (student) => student.unit2?.stages.verbs?.latest,
+                        ),
+                      ),
+                    )}
+                    note="当前筛选班级 · 已提交学生"
+                    icon={<BookOpen />}
+                  />
+                  <Metric
+                    label="时态最近均分"
+                    value={scoreText(
+                      average(
+                        students.map((student) => student.unit2?.postPractice),
+                      ),
+                    )}
+                    note="当前筛选班级 · 已提交学生"
+                    icon={<ClipboardList />}
+                  />
+                  <Metric
+                    label="写作综合得分率"
+                    value={scoreText(
+                      average(
+                        students.map((student) => student.unit2?.radar.writing),
+                      ),
+                    )}
+                    note="课堂与作文均完成的学生"
+                    icon={<FilePenLine />}
+                  />
                 </section>
-                <p className="at-help">当前筛选范围：{students.filter(student => (student.unit2?.attemptCount || 0) > 0).length}人已参与，{students.filter(student => student.unit2?.completed === 4).length}人完成四项。</p>
+                <p className="at-help">
+                  当前筛选范围：
+                  {
+                    students.filter(
+                      (student) => (student.unit2?.attemptCount || 0) > 0,
+                    ).length
+                  }
+                  人已参与，
+                  {
+                    students.filter((student) => student.unit2?.completed === 4)
+                      .length
+                  }
+                  人完成四项。
+                </p>
               </section>
             )}
             {tab === 'students' && (
@@ -799,7 +834,13 @@ export function ArchiveTeacher() {
                       </button>
                     )}
                   </label>
-                  <SchoolClassFilter college={collegeFilter} classKey={classFilter} groups={directory.groups} onCollege={setCollegeFilter} onClass={setClassFilter} />
+                  <SchoolClassFilter
+                    college={collegeFilter}
+                    classKey={classFilter}
+                    groups={directory.groups}
+                    onCollege={setCollegeFilter}
+                    onClass={setClassFilter}
+                  />
                 </div>
                 {data.profileRestricted && (
                   <Notice>
@@ -930,12 +971,19 @@ export function ArchiveTeacher() {
                                           .label
                                       }
                                     </small>
-                                    {student.rawClassName && student.rawClassName !== student.className && (
-                                      <small>原填班级：{student.rawClassName}</small>
-                                    )}
-                                    {student.rawName && student.rawName !== student.name && (
-                                      <small>原填姓名：{student.rawName}</small>
-                                    )}
+                                    {student.rawClassName &&
+                                      student.rawClassName !==
+                                        student.className && (
+                                        <small>
+                                          原填班级：{student.rawClassName}
+                                        </small>
+                                      )}
+                                    {student.rawName &&
+                                      student.rawName !== student.name && (
+                                        <small>
+                                          原填姓名：{student.rawName}
+                                        </small>
+                                      )}
                                   </div>
                                 </div>
                               </td>
@@ -978,130 +1026,22 @@ export function ArchiveTeacher() {
               </>
             )}
             {tab === 'tasks' && (
-              <>
-                <section className="at-section-heading">
-                  <div>
-                    <p className="at-eyebrow">02 / TEACH & PRACTISE</p>
-                    <h2>把下一步，交给学生</h2>
-                    <p>
-                      发布课程入口、阅读材料或铁路英语小测，按班级安排学习。
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="at-primary"
-                    onClick={() => setTaskEditor(blankTask())}
-                  >
-                    <Plus />
-                    新建学习任务
-                  </button>
-                </section>
-                <section className="at-feature-banner">
-                  <div className="at-feature-icon">
-                    <ClipboardList />
-                  </div>
-                  <div>
-                    <h3>20道铁路情境题，教师自主组卷</h3>
-                    <p>
-                      覆盖车站服务、机车车辆、安全与跨文化沟通、ECRL情境阅读。题库组卷，不是AI自动出题；每道题均可修改。本题库用于课堂练习，不用于保密考试。
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="at-secondary"
-                    onClick={() => setTaskEditor(blankTask())}
-                  >
-                    开始组题
-                    <ArrowRight />
-                  </button>
-                </section>
-                <div className="at-module-links">
-                  <a href={wordPath('teacher')}>
-                    <AudioLines />
-                    <div>
-                      <strong>每课单词跟读</strong>
-                      <small>管理原有单词练习</small>
-                    </div>
-                    <ExternalLink />
-                  </a>
-                  <a href={sitePath('teacher')}>
-                    <BookOpen />
-                    <div>
-                      <strong>Unit 1 情境口语</strong>
-                      <small>查看原有口语活动</small>
-                    </div>
-                    <ExternalLink />
-                  </a>
-                </div>
-                {data.tasks.length ? (
-                  <div className="at-content-grid">
-                    {data.tasks.map((task, index) => (
-                      <article
-                        className="at-content-card"
-                        key={task.id || index}
-                      >
-                        <div className="at-card-meta">
-                          <span>{taskLabels[task.type] || task.type}</span>
-                          <Status status={task.status} />
-                        </div>
-                        <h3>{task.title}</h3>
-                        <p>{task.description || '暂无任务说明'}</p>
-                        <div className="at-tags">
-                          <span>
-                            {task.unit} · {task.lesson}
-                          </span>
-                          {task.questions?.length ? (
-                            <span>{task.questions.length} 道题</span>
-                          ) : null}
-                        </div>
-                        <small className="at-muted">
-                          {task.classes.length
-                            ? task.classes.join('、')
-                            : '未选择班级'}
-                          <br />
-                          {task.dueAt
-                            ? `截止 ${formatDate(task.dueAt)}`
-                            : '不设截止时间'}
-                        </small>
-                        <footer>
-                          <button
-                            type="button"
-                            className="at-text-button"
-                            onClick={() =>
-                              setTaskEditor({
-                                ...task,
-                                questions:
-                                  task.questions?.map((question) => ({
-                                    ...question,
-                                    options: [...question.options],
-                                  })) || [],
-                              })
-                            }
-                          >
-                            <FilePenLine />
-                            编辑任务
-                          </button>
-                          {safeLink(task.href) && (
-                            <a
-                              className="at-text-button"
-                              href={safeLink(task.href)}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              打开练习
-                              <ExternalLink />
-                            </a>
-                          )}
-                        </footer>
-                      </article>
-                    ))}
-                  </div>
-                ) : (
-                  <Empty title="还没有学习任务">
-                    新建一个任务，先保存草稿，检查后再发布到学生档案。
-                  </Empty>
-                )}
-              </>
+              <CourseBoard
+                teacher
+                tasks={data.tasks as unknown as CourseTask[]}
+                onTask={(unit, lesson, task) =>
+                  setTaskEditor(
+                    task
+                      ? (task as unknown as ArchiveTask)
+                      : {
+                          ...blankTask(),
+                          unit: 'Unit ' + unit,
+                          lesson: 'Lesson ' + lesson,
+                          type: 'link',
+                        },
+                  )
+                }
+              />
             )}
             {tab === 'news' && (
               <>
@@ -1436,7 +1376,14 @@ function AccessCard({
         <small>请让学生出示申请页面上的6位数字验证码</small>
         <strong aria-hidden="true">• • • • • •</strong>
       </div>
-      <StudentClassField value={verifiedClass} onChange={value => { setVerifiedClass(value); setVerified(false); }} label="当面核对完整班级" />
+      <StudentClassField
+        value={verifiedClass}
+        onChange={(value) => {
+          setVerifiedClass(value);
+          setVerified(false);
+        }}
+        label="当面核对完整班级"
+      />
       <label className="at-field">
         <span>输入学生屏幕上的验证码</span>
         <input
@@ -2052,7 +1999,7 @@ function HistoryDetails({ record }: { record: History }) {
   );
 }
 
-function TaskComposer({
+export function TaskComposer({
   initial,
   classes,
   onClose,
@@ -2064,6 +2011,9 @@ function TaskComposer({
   onSaved: (status: string) => Promise<void>;
 }) {
   const [task, setTask] = useState<ArchiveTask>(initial);
+  const courseLocked = Boolean(
+    initial.courseLocked || initial.status === 'published',
+  );
   const [topic, setTopic] = useState('all');
   const [difficulty, setDifficulty] = useState('all');
   const [count, setCount] = useState(5);
@@ -2073,6 +2023,34 @@ function TaskComposer({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [wordUnits, setWordUnits] = useState<
+    { id: string; title: string; teacher_name: string; share_code: string }[]
+  >([]);
+  const [wordUnitError, setWordUnitError] = useState('');
+  useEffect(() => {
+    if (task.type !== 'word' || !getWordToken()) return;
+    let active = true;
+    void wordRequest<{
+      rows: {
+        id: string;
+        title: string;
+        teacher_name: string;
+        share_code: string;
+      }[];
+    }>('teacherListSharedUnits', {}, getWordToken())
+      .then((result) => {
+        if (active) {
+          setWordUnits(result.rows);
+          setWordUnitError('');
+        }
+      })
+      .catch(() => {
+        if (active) setWordUnitError('跟读单元暂未读取到，可填写原练习链接。');
+      });
+    return () => {
+      active = false;
+    };
+  }, [task.type]);
   const form = useRef<HTMLFormElement>(null);
   const classDirectory = useMemo(
     () =>
@@ -2084,7 +2062,8 @@ function TaskComposer({
   );
   const filteredClasses = classes.filter(
     (name) =>
-      (!classCollege || collegeForClass(name) === classCollege) && (!classQuery || classDirectory.matches({ class_name: name }, classQuery)),
+      (!classCollege || collegeForClass(name) === classCollege) &&
+      (!classQuery || classDirectory.matches({ class_name: name }, classQuery)),
   );
   const available = RAILWAY_QUESTION_BANK.filter(
     (question) =>
@@ -2207,6 +2186,7 @@ function TaskComposer({
               <span>任务类型</span>
               <select
                 value={task.type}
+                disabled={courseLocked}
                 onChange={(event) => {
                   const type = event.target.value as TaskType;
                   update({
@@ -2243,33 +2223,31 @@ function TaskComposer({
             </label>
             <label className="at-field">
               <span>单元 *</span>
-              <input
-                required
-                maxLength={60}
+              <select
+                disabled={courseLocked}
                 value={task.unit}
                 onChange={(event) => update({ unit: event.target.value })}
-                list="at-unit-options"
-              />
-              <datalist id="at-unit-options">
-                {[1, 2, 3, 4, 5, 6, 7, 8].map((unit) => (
-                  <option key={unit}>Unit {unit}</option>
+              >
+                {Array.from({ length: 30 }, (_, i) => i + 1).map((unit) => (
+                  <option value={`Unit ${unit}`} key={unit}>
+                    Unit {unit}
+                  </option>
                 ))}
-              </datalist>
+              </select>
             </label>
             <label className="at-field">
               <span>课次 *</span>
-              <input
-                required
-                maxLength={60}
+              <select
+                disabled={courseLocked}
                 value={task.lesson}
                 onChange={(event) => update({ lesson: event.target.value })}
-                list="at-lesson-options"
-              />
-              <datalist id="at-lesson-options">
-                {[1, 2, 3, 4].map((lesson) => (
-                  <option key={lesson}>Lesson {lesson}</option>
+              >
+                {[1, 2, 3].map((lesson) => (
+                  <option value={`Lesson ${lesson}`} key={lesson}>
+                    第{lesson}课
+                  </option>
                 ))}
-              </datalist>
+              </select>
             </label>
             <label className="at-field at-span-two">
               <span>学习说明</span>
@@ -2282,6 +2260,40 @@ function TaskComposer({
                 placeholder="告诉学生要做什么，以及完成后如何检查。"
               />
             </label>
+            {task.type === 'word' && (
+              <label className="at-field at-span-two">
+                <span>选择已发布的跟读单元</span>
+                <select
+                  disabled={courseLocked}
+                  value={
+                    wordUnits.find((unit) =>
+                      task.href.includes(`unit=${unit.share_code}`),
+                    )?.id || ''
+                  }
+                  onChange={(event) => {
+                    const unit = wordUnits.find(
+                      (unit) => unit.id === event.target.value,
+                    );
+                    if (unit)
+                      update({
+                        href: `${location.origin}${wordPath()}?unit=${encodeURIComponent(unit.share_code)}`,
+                        ...(task.title ? {} : { title: unit.title }),
+                      });
+                  }}
+                >
+                  <option value="">请选择（或在下方粘贴已有链接）</option>
+                  {wordUnits.map((unit) => (
+                    <option key={unit.id} value={unit.id}>
+                      {unit.title} · {unit.teacher_name}
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  {wordUnitError ||
+                    '选定单元后自动填写链接；其跟读成绩会关联到本课。'}
+                </small>
+              </label>
+            )}
             {task.type !== 'quiz' && (
               <label className="at-field at-span-two">
                 <span>
@@ -2292,11 +2304,14 @@ function TaskComposer({
                 </span>
                 <input
                   required={['word', 'speaking', 'link'].includes(task.type)}
+                  readOnly={courseLocked && initial.type === 'word'}
                   value={task.href}
                   onChange={(event) => update({ href: event.target.value })}
                   placeholder="https://… 或本站练习地址"
                 />
-                <small>可指向现有练习模块，学生仍在原页面完成练习。</small>
+                <small>
+                  本站跟读、小测及第二课活动可回传成绩；普通外部链接仅用于打开资源。
+                </small>
               </label>
             )}
             <label className="at-field at-span-two">
@@ -2316,9 +2331,14 @@ function TaskComposer({
             </div>
             <label className="at-field">
               <span>按学院选择任务班级</span>
-              <select value={classCollege} onChange={event => setClassCollege(event.target.value)}>
+              <select
+                value={classCollege}
+                onChange={(event) => setClassCollege(event.target.value)}
+              >
                 <option value="">全部学院</option>
-                {SCHOOL_COLLEGES.map(college => <option key={college}>{college}</option>)}
+                {SCHOOL_COLLEGES.map((college) => (
+                  <option key={college}>{college}</option>
+                ))}
               </select>
             </label>
             <label className="at-search">
