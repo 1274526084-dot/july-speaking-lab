@@ -1,0 +1,1 @@
+import{T as s}from"./school-class-filter-20261005-classes.js";var a=s("circle-check",[["circle",{cx:"12",cy:"12",r:"10",key:"1mglay"}],["path",{d:"m9 12 2 2 4-4",key:"dzmm74"}]]),c=s("plus",[["path",{d:"M5 12h14",key:"1ays0h"}],["path",{d:"M12 5v14",key:"s699le"}]]);export{a as n,c as t};

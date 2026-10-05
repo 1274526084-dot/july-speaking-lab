@@ -1,6 +1,7 @@
 /* oxlint-disable typescript/no-require-imports */
 const cloudbase = require('@cloudbase/node-sdk');
 const { createHash, pbkdf2Sync, randomBytes, timingSafeEqual } = require('node:crypto');
+const { projectSchoolRecord, createSchoolClassDirectory } = require('./school-classes');
 
 const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
 const db = app.database();
@@ -149,8 +150,12 @@ function normalizeIdentity(value) {
 }
 
 function identityKey(row) {
-  return `${normalizeIdentity(row?.class_name)}|${normalizeIdentity(row?.student_name)}`;
+  const view = projectSchoolRecord(row);
+  const group = createSchoolClassDirectory([]).resolve(view);
+  return `${group.identityKey}|${normalizeIdentity(view.student_name)}`;
 }
+
+function domestic(row) { return !/malaysia|malaysian|马来西亚/i.test(`${row?.country || ''}${row?.region || ''}${row?.source || ''}`); }
 
 function projectTagged(row) {
   return cleanText(row?.project_id, 80) === PROJECT_ID;
@@ -366,24 +371,24 @@ async function handleList(event, body) {
     readCollection(SPEAKING_ATTEMPTS, 1000),
   ]);
   const wordSummaries = summarizeAttempts(
-    wordRows.filter((row) => row.status === 'completed' && (projectTagged(row) || legacyWordAttempt(row))),
+    wordRows.filter((row) => domestic(row) && row.status === 'completed' && (projectTagged(row) || legacyWordAttempt(row))),
     'average_score',
   );
   const speakingSummaries = summarizeAttempts(
-    speakingRows.filter((row) => projectTagged(row) || legacySpeakingAttempt(row)),
+    speakingRows.filter((row) => domestic(row) && (projectTagged(row) || legacySpeakingAttempt(row))),
     'total_score',
   );
   const sourceRows = Array.isArray(result.data)
-    ? result.data.filter((row) => projectTagged(row) || legacyDomesticProfile(row))
+    ? result.data.filter((row) => domestic(row) && (projectTagged(row) || legacyDomesticProfile(row)))
     : [];
   const uniqueProfiles = new Map();
   sourceRows.forEach((row) => {
     const key = identityKey(row);
     const current = uniqueProfiles.get(key);
-    if (!current || projectTagged(row) || Number(row.updated_at || 0) > Number(current.updated_at || 0)) uniqueProfiles.set(key, row);
+    if (!current || Number(projectTagged(row)) > Number(projectTagged(current)) || (projectTagged(row) === projectTagged(current) && Number(row.updated_at || 0) > Number(current.updated_at || 0))) uniqueProfiles.set(key, row);
   });
   const rows = [...uniqueProfiles.values()].map((raw) => {
-    const profile = publicProfile(raw);
+    const profile = projectSchoolRecord(publicProfile(raw));
     const key = identityKey(profile);
     return {
       ...profile,

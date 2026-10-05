@@ -1,3 +1,4 @@
+import { projectSchoolPayload, projectSchoolSubmission } from '@/lib/school-classes';
 export const WORD_API_URL = 'https://cloudbase-d3gxxe4l88c3d5907-1431364187.ap-shanghai.app.tcloudbase.com/wordLabApi';
 
 const TOKEN_KEY = 'july-word-lab.staff-token';
@@ -31,7 +32,7 @@ export async function wordRequest<T>(action: string, data: Record<string, unknow
   const response = await fetch(WORD_API_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action, token, ...data }),
+    body: JSON.stringify({ action, token, ...projectSchoolSubmission(data) }),
   });
   const raw = await response.text();
   let payload: T & { error?: string; message?: string; code?: string };
@@ -41,7 +42,7 @@ export async function wordRequest<T>(action: string, data: Record<string, unknow
     const oversize = response.status === 413 || payload.code === 'EXCEED_MAX_PAYLOAD_SIZE';
     throw new Error(oversize ? '录音文件太大，请重新录制；读完单词后立即点“我读完了”。' : payload.error || payload.message || `请求失败（${response.status}），请稍后重试。`);
   }
-  return payload;
+  return action === 'listAttempts' ? projectSchoolPayload(payload) : payload;
 }
 
 function encodeMonoWav(samples: Float32Array, sampleRate: number) {
@@ -161,6 +162,9 @@ export type WordResult = {
 };
 
 export type WordAttempt = {
+  raw_student_name?: string;
+  raw_class_name?: string;
+  class_identity_name?: string;
   id: string;
   teacher_id: string;
   teacher_name: string;

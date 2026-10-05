@@ -1,6 +1,6 @@
 /* oxlint-disable typescript/no-require-imports */
 const { createHash, randomBytes, randomUUID, randomInt, timingSafeEqual } = require('node:crypto');
-const { createClassDirectory } = require('./class-groups');
+const { createSchoolClassDirectory: createClassDirectory, projectSchoolRecord, CLASS_NORMALIZATION_VERSION } = require('./school-classes');
 const { CLASS_CATALOG } = require('./class-catalog');
 const { gradeUnit2, unit2Summary } = require('./unit2');
 
@@ -13,6 +13,7 @@ const COLLECTIONS = Object.freeze({
   tasks: 'english_archive_tasks', news: 'english_archive_news',
   submissions: 'english_archive_quiz_submissions', rates: 'english_archive_rates',
   unit2: 'english_archive_unit2_attempts',
+  classNormalization: 'english_archive_class_normalization',
 });
 const LEGACY = Object.freeze({ profiles: 'english_learning_profiles', words: 'word_attempts', speaking: 'speaking_attempts' });
 const DAY = 24 * 60 * 60 * 1000;
@@ -39,6 +40,7 @@ const validToken = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(v
 const tagged = row => row?.project_id === PROJECT_ID;
 const foreign = row => /malaysia|malaysian|马来西亚/i.test(`${row?.country || ''}${row?.region || ''}${row?.source || ''}`);
 const scoped = (row, kind) => {
+  if (foreign(row)) return false;
   if (!text(row?.student_name, 60) || !text(row?.class_name, 100)) return false;
   if (row?.project_id) return tagged(row);
   if (!row?.student_name || !row?.class_name || foreign(row)) return false;
@@ -107,7 +109,10 @@ function publicTask(row, teacher = false) {
 function publicNews(row) {
   return { id: row.id || row._id, title: row.title, summary: row.summary || '', url: row.url || '', source: row.source || '', publishedDate: row.published_date || '', vocabulary: row.vocabulary || [], question: row.question || '', status: row.status, creator: row.creator, creatorName: row.creator_name, createdAt: row.created_at, updatedAt: row.updated_at };
 }
-function publicStudent(student) { return { id: student.id, name: student.name, className: student.class_name }; }
+function publicStudent(student) {
+  const view = projectSchoolRecord({ ...student, student_name: student.name });
+  return { id: student.id, name: view.student_name, className: view.class_name, college: view.normalized_college, rawName: view.raw_student_name, rawClassName: view.raw_class_name };
+}
 function publicRequest(row, now) {
   return { id: row.id, name: row.name, className: row.class_name, status: row.status === 'pending' && row.expires_at <= now ? 'expired' : row.status, createdAt: row.created_at, expiresAt: row.expires_at, approvedAt: row.approved_at || null, approvedBy: row.approved_by || null, studentId: row.student_id || null };
 }
@@ -224,15 +229,15 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     const names = ['profiles', 'words', 'speaking', 'students', 'reflections', 'submissions', 'tasks', 'news', 'unit2'];
     const result = await Promise.all(names.map(key => read(LEGACY[key] || COLLECTIONS[key], LEGACY[key] ? {} : { project_id: PROJECT_ID }, Boolean(LEGACY[key]))));
     const data = { hasMore: result.some(item => item.hasMore), incompleteCollections: names.filter((_, i) => result[i].hasMore), scans: Object.fromEntries(names.map((key, index) => [key, { scanned: result[index].rows.length, total: result[index].totalCount, pages: result[index].pages, elapsedMs: result[index].elapsedMs }])) };
-    names.forEach((key, index) => { data[key] = LEGACY[key] ? result[index].rows.filter(row => scoped(row, key) && (key !== 'words' || row.status === 'completed')) : result[index].rows.filter(tagged); });
+    names.forEach((key, index) => { data[key] = LEGACY[key] ? result[index].rows.filter(row => scoped(row, key) && (key !== 'words' || row.status === 'completed')).map(projectSchoolRecord) : result[index].rows.filter(tagged); });
     // The directory uses class/major evidence, not student or attempt counts.
     // Keep EVERY distinct pair, including ambiguous spellings; duplicate rows
     // cannot add identity evidence and made packed-class parsing quadratic.
     const classVariants = new Map();
-    const classKey = row => JSON.stringify([row.class_name, row.major || null]);
+    const classKey = row => JSON.stringify([row.class_name, row.major || null, row.class_identity_name || null]);
     for (const kind of ['profiles', 'words', 'speaking', 'students']) {
       for (const row of data[kind]) {
-        const descriptor = { class_name: row.class_name, ...(kind !== 'students' && row.major ? { major: row.major } : {}) };
+        const descriptor = { class_name: row.class_name, class_identity_name: row.class_identity_name, raw_class_name: row.raw_class_name, ...(kind !== 'students' && row.major ? { major: row.major } : {}) };
         classVariants.set(classKey(descriptor), descriptor);
       }
     }
@@ -243,7 +248,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     for (const kind of ['profiles', 'words', 'speaking']) {
       for (const row of data[kind]) {
         const group = resolvedClasses.get(classKey(row));
-        const key = `${group.key}\0${normalizeName(row.student_name)}`;
+        const key = `${group.identityKey}\0${normalizeName(row.student_name)}`;
         let bucket = data.identities.get(key);
         if (!bucket) {
           bucket = { name: text(row.student_name, 60), group, profiles: [], words: [], speaking: [], studentNumbers: new Set(), profile: null };
@@ -271,14 +276,22 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
   function candidateId(classKey, name) { return `student-${hash(`${PROJECT_ID}|${classKey}|${normalizeName(name)}`).slice(0, 48)}`; }
   function allStudents(data) {
     const students = new Map(data.students.map(student => [student.id, student]));
-    for (const { name, group } of data.identities.values()) {
-      const id = candidateId(group.key, name);
-      if (!students.has(id)) students.set(id, { id, name, class_name: group.label.replace(/（待确认）$/, ''), class_key: group.key, ambiguous: group.ambiguous, project_id: PROJECT_ID });
+    const existingByIdentity = new Map(data.students.map(student => {
+      const group = data.directory.resolve({ class_name: student.class_name, raw_class_name: student.raw_class_name, class_identity_name: student.class_identity_name });
+      return [`${group.identityKey}\0${normalizeName(publicStudent(student).name)}`, student];
+    }));
+    for (const { name, group, profiles, words, speaking } of data.identities.values()) {
+      const existing = existingByIdentity.get(`${group.identityKey}\0${normalizeName(name)}`);
+      const id = existing?.id || candidateId(group.identityKey, name);
+      const source = [...profiles, ...words, ...speaking][0];
+      if (!students.has(id)) students.set(id, { id, name, raw_student_name: source?.raw_student_name, class_name: group.label, raw_class_name: source?.raw_class_name, class_identity_name: source?.class_identity_name, class_key: group.identityKey, ambiguous: group.ambiguous, project_id: PROJECT_ID });
     }
     return students;
   }
   function identityFor(student, data) {
-    return data.identities.get(`${student.class_key}\0${normalizeName(student.name)}`);
+    const view = publicStudent(student);
+    const group = data.directory.resolve({ class_name: student.class_name, raw_class_name: student.raw_class_name, class_identity_name: student.class_identity_name });
+    return data.identities.get(`${student.class_key}\0${normalizeName(view.name)}`) || data.identities.get(`${group.identityKey}\0${normalizeName(view.name)}`);
   }
   function legacyRows(kind, student, data) {
     return identityFor(student, data)?.[kind] || [];
@@ -413,13 +426,15 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     }
     if (action === 'requestAccess') {
       await rate(event, 'request-access', 300);
-      const name = requiredText(body.name, '姓名', 60), className = requiredText(body.className, '完整班级', 100);
+      const originalName = requiredText(body.name, '姓名', 60), originalClass = requiredText(body.className, '完整班级', 100);
+      const view = projectSchoolRecord({ student_name: originalName, class_name: originalClass });
+      const name = view.student_name, className = view.class_name;
       await rate(event, 'request-identity', 6, 15 * 60 * 1000, `${normalizeName(name)}|${className}`);
       const requestToken = randomBytes(32).toString('hex');
       const studentToken = hash(`english-archive-device|${requestToken}`);
       const verificationCode = String(randomInt(100000, 1000000));
       const id = `access-${hash(requestToken).slice(0, 48)}`;
-      const row = { id, project_id: PROJECT_ID, name, class_name: className, request_token_hash: hash(requestToken), verification_hash: hash(`${id}|${verificationCode}`), session_id: hash(studentToken), status: 'pending', created_at: now(), expires_at: now() + DAY };
+      const row = { id, project_id: PROJECT_ID, name, class_name: className, raw_student_name: originalName, raw_class_name: originalClass, request_token_hash: hash(requestToken), verification_hash: hash(`${id}|${verificationCode}`), session_id: hash(studentToken), status: 'pending', created_at: now(), expires_at: now() + DAY };
       await put(COLLECTIONS.requests, id, row);
       return { requestId: id, requestToken, verificationCode, expiresAt: row.expires_at, status: 'pending' };
     }
@@ -504,11 +519,37 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       });
       return { submission: { id: submitted.id, taskId: submitted.task_id, taskVersion: submitted.task_version ?? submitted.task_updated_at, score: submitted.score, correct: submitted.correct, total: submitted.total, submittedAt: submitted.created_at, feedback: submitted.feedback }, score: submitted.score, feedback: submitted.feedback };
     }
-    const teacherActions = ['teacherDashboard', 'teacherStudent', 'listAccessRequests', 'approveAccess', 'rejectAccess', 'revokeDevice', 'saveTask', 'saveNews', 'teacherSession'];
+    const teacherActions = ['teacherDashboard', 'teacherStudent', 'listAccessRequests', 'approveAccess', 'rejectAccess', 'revokeDevice', 'saveTask', 'saveNews', 'teacherSession', 'normalizeClasses'];
     if (!teacherActions.includes(action)) fail(404, '未知操作。');
     const staff = await teacher(body.token);
     await rate(event, action, action === 'approveAccess' ? 100 : 180, 15 * 60 * 1000, staff.code);
     if (action === 'teacherSession') return { code: staff.code, name: staff.name };
+    if (action === 'normalizeClasses') {
+      if (staff.code !== 'july') fail(403, '仅 July 可以执行全量班级整理。');
+      const scans = await Promise.all(Object.entries(LEGACY).map(async ([kind, collection]) => ({ kind, collection, scan: await read(collection, {}, true) })));
+      if (scans.some(item => item.scan.hasMore)) fail(409, '记录读取不完整，未执行整理。');
+      const counts = {}; const pending = [];
+      for (const { kind, collection, scan } of scans) {
+        const report = { scanned: scan.rows.length, scoped: 0, normalized: 0, default: 0, splitNames: 0, fingerprint: hash(JSON.stringify(scan.rows)) };
+        for (const row of scan.rows) {
+          if (!scoped(row, kind) || (kind === 'words' && row.status !== 'completed')) continue;
+          const view = projectSchoolRecord(row); report.scoped++;
+          if (view.class_name !== view.raw_class_name) report.normalized++;
+          if (view.class_name === '默认班级（测试）') report.default++;
+          if (view.student_name !== view.raw_student_name) report.splitNames++;
+          const sourceId = row.id || row._id;
+          if (!sourceId) fail(409, '记录编号缺失，未执行整理。');
+          pending.push({ id: `class-map-${hash(`${CLASS_NORMALIZATION_VERSION}|${collection}|${sourceId}`).slice(0, 48)}`, project_id: PROJECT_ID, source_collection: collection, source_id: sourceId, raw_student_name: view.raw_student_name, raw_class_name: view.raw_class_name, student_name: view.student_name, class_name: view.class_name, college: view.normalized_college, identity_name: view.class_identity_name, source_fingerprint: hash(JSON.stringify(row)), version: CLASS_NORMALIZATION_VERSION, normalized_by: staff.code });
+        }
+        counts[kind] = report;
+      }
+      if (body.commit === true) {
+        // Only this project's separate mapping collection is written. All old
+        // scores, audio, IDs and Malaysia datasets remain byte-for-byte intact.
+        for (let offset = 0; offset < pending.length; offset += 20) await Promise.all(pending.slice(offset, offset + 20).map(row => put(COLLECTIONS.classNormalization, row.id, row)));
+      }
+      return { committed: body.commit === true, version: CLASS_NORMALIZATION_VERSION, records: pending.length, counts, originalCollectionsModified: false };
+    }
     if (action === 'saveTask') return saveOwned('tasks', body, staff);
     if (action === 'saveNews') return saveOwned('news', body, staff);
     if (action === 'listAccessRequests') {

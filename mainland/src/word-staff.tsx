@@ -25,7 +25,8 @@ import {
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { type SyntheticEvent, useEffect, useMemo, useState } from 'react';
-import { createClassDirectory } from '@/lib/class-groups';
+import { createSchoolClassDirectory as createClassDirectory } from '@/lib/school-classes';
+import { SchoolClassFilter } from '@/components/school-class-filter';
 import { CLASS_CATALOG } from '@/lib/class-catalog';
 import { ClassGroupingNote } from '@/components/class-grouping-note';
 import {
@@ -284,6 +285,7 @@ function AttemptsTable({
 }) {
   const [classKeyword, setClassKeyword] = useState('');
   const [classFilter, setClassFilter] = useState('');
+  const [collegeFilter, setCollegeFilter] = useState('');
   const directory = useMemo(() => createClassDirectory(rows, CLASS_CATALOG.map(class_name => ({ class_name }))), [rows]);
   const [unitFilter, setUnitFilter] = useState('');
   const [teacherFilter, setTeacherFilter] = useState('');
@@ -306,11 +308,12 @@ function AttemptsTable({
       rows.filter(
         (row) =>
           directory.matches(row, classKeyword) &&
+          (!collegeFilter || directory.resolve(row).college === collegeFilter) &&
           (!classFilter || directory.resolve(row).key === classFilter) &&
           (!unitFilter || row.unit_id === unitFilter) &&
           (!teacherFilter || row.teacher_id === teacherFilter),
       ),
-    [rows, classKeyword, classFilter, directory, unitFilter, teacherFilter],
+    [rows, classKeyword, classFilter, collegeFilter, directory, unitFilter, teacherFilter],
   );
   function exportCsv() {
     const quote = (value: unknown) =>
@@ -331,7 +334,7 @@ function AttemptsTable({
         row.teacher_name,
         row.unit_title,
         row.student_name,
-        row.class_name,
+        row.raw_class_name ?? row.class_name,
         directory.resolve(row).label,
         row.average_score,
         row.average_self,
@@ -359,7 +362,8 @@ function AttemptsTable({
   }
   return (
     <section>
-      <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_200px_180px_160px_auto]">
+      <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <SchoolClassFilter college={collegeFilter} classKey={classFilter} groups={directory.groups} onCollege={setCollegeFilter} onClass={setClassFilter} className="word-input" />
         <label className="relative">
           <span className="sr-only">按班级搜索</span>
           <Search className="pointer-events-none absolute left-4 top-1/2 z-10 h-5 w-5 -translate-y-1/2 text-slate-400" />
@@ -380,10 +384,6 @@ function AttemptsTable({
             </button>
           )}
         </label>
-        <select aria-label="选择归类班级" value={classFilter} onChange={event => { setClassFilter(event.target.value); setClassKeyword(''); }} className="word-input">
-          <option value="">全部班级（合并写法）</option>
-          {directory.groups.map(group => <option key={group.key} value={group.key}>{group.label} · {group.count}条</option>)}
-        </select>
         <select
           value={unitFilter}
           onChange={(event) => setUnitFilter(event.target.value)}
@@ -449,7 +449,7 @@ function AttemptsTable({
                   </td>
                 )}
                 <td className="font-bold">{row.student_name}</td>
-                <td><strong>{directory.resolve(row).label}</strong>{directory.resolve(row).label !== row.class_name && <p className="mt-1 text-xs text-slate-500">原填：{row.class_name}</p>}</td>
+                <td><strong>{directory.resolve(row).label}</strong>{directory.resolve(row).label !== (row.raw_class_name ?? row.class_name) && <p className="mt-1 text-xs text-slate-500">原填：{row.raw_class_name ?? row.class_name}</p>}</td>
                 <td>{row.unit_title}</td>
                 <td>
                   <b className="text-xl text-indigo-700">{row.average_score}</b>

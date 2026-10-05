@@ -13,13 +13,12 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { createClassDirectory } from '@/lib/class-groups';
+import { createSchoolClassDirectory as createClassDirectory, projectSchoolRecord } from '@/lib/school-classes';
+import { SchoolClassFilter } from '@/components/school-class-filter';
 import { CLASS_CATALOG } from '@/lib/class-catalog';
 import { ClassGroupingNote } from '@/components/class-grouping-note';
 import {
   clearProfileTeacherToken,
-  COLLEGE_OPTIONS,
-  collegeForMajor,
   getProfileTeacherToken,
   profilePath,
   profileRequest,
@@ -89,7 +88,7 @@ function entranceScoreInfo(row: EnglishProfile) {
 }
 
 function profileCollege(row: EnglishProfile) {
-  return row.college || collegeForMajor(row.major) || '未填写';
+  return projectSchoolRecord(row).normalized_college;
 }
 
 function Metric({ icon, value, label, note }: { icon: React.ReactNode; value: string | number; label: string; note: string }) {
@@ -159,7 +158,7 @@ export function ProfileTeacher() {
   const filtered = useMemo(() => rows.filter((row) => {
     const scoreInfo = entranceScoreInfo(row);
     const college = profileCollege(row);
-    const searchable = normalize(`${row.student_name}${row.class_name}${college}${row.major}${scoreInfo.typeLabel}`);
+    const searchable = normalize(`${row.student_name}${row.raw_student_name || ''}${row.class_name}${row.raw_class_name || ''}${college}${row.major}${scoreInfo.typeLabel}`);
     return (!keyword || searchable.includes(normalize(keyword)) || directory.matches(row, keyword)) && (!collegeFilter || college === collegeFilter) && (!classFilter || directory.resolve(row).key === classFilter) && (!majorFilter || row.major === majorFilter) && (!admissionFilter || scoreInfo.type === admissionFilter) && (!supportOnly || isNeedsSupport(row));
   }), [admissionFilter, classFilter, collegeFilter, directory, keyword, majorFilter, rows, supportOnly]);
 
@@ -199,7 +198,7 @@ export function ProfileTeacher() {
     const lines = filtered.map((row) => {
       const scoreInfo = entranceScoreInfo(row);
       const growth = compositeInfo(row);
-      return [dateText(row.updated_at), row.student_name, row.class_name, directory.resolve(row).label, profileCollege(row), row.major, scoreInfo.typeLabel, scoreInfo.known ? scoreInfo.score : '未填写', scoreInfo.known ? scoreInfo.fullScore : '未填写', scoreInfo.rate === null ? '未填写' : `${scoreInfo.rate.toFixed(1)}%`, growth.score.toFixed(1), growth.word?.average_score ?? '待完成', growth.word?.attempts ?? 0, growth.speaking?.average_score ?? '待完成', growth.speaking?.attempts ?? 0, ...skillKeys.map((key) => row.skills[key]), row.confidence, row.speaking_anxiety, row.english_interest, row.weekly_time, row.current_habits.join('；'), row.difficulties.join('；'), row.learning_goals.join('；'), row.preferred_activities.join('；'), row.major_reasons.join('；'), row.school_reasons.join('；'), row.career_plan, row.semester_goal, row.teacher_message, row.device_ready].map(cell).join(',');
+      return [dateText(row.updated_at), row.student_name, row.raw_class_name ?? row.class_name, directory.resolve(row).label, profileCollege(row), row.major, scoreInfo.typeLabel, scoreInfo.known ? scoreInfo.score : '未填写', scoreInfo.known ? scoreInfo.fullScore : '未填写', scoreInfo.rate === null ? '未填写' : `${scoreInfo.rate.toFixed(1)}%`, growth.score.toFixed(1), growth.word?.average_score ?? '待完成', growth.word?.attempts ?? 0, growth.speaking?.average_score ?? '待完成', growth.speaking?.attempts ?? 0, ...skillKeys.map((key) => row.skills[key]), row.confidence, row.speaking_anxiety, row.english_interest, row.weekly_time, row.current_habits.join('；'), row.difficulties.join('；'), row.learning_goals.join('；'), row.preferred_activities.join('；'), row.major_reasons.join('；'), row.school_reasons.join('；'), row.career_plan, row.semester_goal, row.teacher_message, row.device_ready].map(cell).join(',');
     });
     const blob = new Blob([`\uFEFF${[headers.map(cell).join(','), ...lines].join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `July-英语学习档案-${new Date().toISOString().slice(0, 10)}.csv`; anchor.click(); URL.revokeObjectURL(url);
@@ -224,8 +223,7 @@ export function ProfileTeacher() {
 
         <section className="dashboard-filters">
           <label className="search-control"><Search /><input type="search" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索姓名、班级、学院或专业" />{keyword && <button type="button" onClick={() => setKeyword('')} aria-label="清除搜索"><X /></button>}</label>
-          <select value={collegeFilter} onChange={(event) => setCollegeFilter(event.target.value)}><option value="">全部学院</option>{COLLEGE_OPTIONS.map((value) => <option key={value}>{value}</option>)}</select>
-          <select aria-label="选择归类班级" value={classFilter} onChange={(event) => setClassFilter(event.target.value)}><option value="">全部班级（合并写法）</option>{classes.map(group => <option key={group.key} value={group.key}>{group.label}</option>)}</select>
+          <SchoolClassFilter college={collegeFilter} classKey={classFilter} groups={classes} onCollege={setCollegeFilter} onClass={setClassFilter} />
           <select value={majorFilter} onChange={(event) => setMajorFilter(event.target.value)}><option value="">全部专业</option>{majors.map((value) => <option key={value}>{value}</option>)}</select>
           <select value={admissionFilter} onChange={(event) => setAdmissionFilter(event.target.value)}><option value="">全部入学方式</option><option value="gaokao">高考</option><option value="single">单招</option></select>
           <label className={`support-toggle ${supportOnly ? 'active' : ''}`}><input type="checkbox" checked={supportOnly} onChange={(event) => setSupportOnly(event.target.checked)} />只看需要关注</label>
@@ -267,7 +265,7 @@ export function ProfileTeacher() {
               {filtered.length ? <div className="profile-list">{filtered.map((row) => (
                 <article key={row.id} className="student-profile-row">
                   <span className="avatar">{row.student_name.slice(0, 1)}</span>
-                  <div className="student-main"><strong>{row.student_name}</strong><p>{directory.resolve(row).label} · {profileCollege(row)} · {row.major}</p>{directory.resolve(row).label !== row.class_name && <small>原填班级：{row.class_name}</small>}</div>
+                  <div className="student-main"><strong>{row.student_name}</strong><p>{directory.resolve(row).label} · {profileCollege(row)} · {row.major}</p>{directory.resolve(row).label !== (row.raw_class_name ?? row.class_name) && <small>原填班级：{row.raw_class_name ?? row.class_name}</small>}{row.raw_student_name && row.raw_student_name !== row.student_name && <small>原填姓名：{row.raw_student_name}</small>}</div>
                   <div><small>入学英语</small><strong>{entranceScoreInfo(row).text}</strong></div>
                   <div><small>综合画像</small><strong>{compositeInfo(row).score.toFixed(1)} / 100</strong></div>
                   <div><small>学习目标</small><p className="tag-line">{row.learning_goals.slice(0, 2).join(' · ') || '未填写'}</p></div>

@@ -1,0 +1,1 @@
+System.register(["./school-class-filter-legacy-20261005-classes.js"],function(e,c){var s;return{setters:[function(e){s=e.T}],execute:function(){e("n",s("circle-check",[["circle",{cx:"12",cy:"12",r:"10",key:"1mglay"}],["path",{d:"m9 12 2 2 4-4",key:"dzmm74"}]])),e("t",s("plus",[["path",{d:"M5 12h14",key:"1ays0h"}],["path",{d:"M12 5v14",key:"s699le"}]]))}}});

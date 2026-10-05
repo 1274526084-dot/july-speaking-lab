@@ -11,7 +11,8 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { createClassDirectory } from '@/lib/class-groups';
+import { createSchoolClassDirectory as createClassDirectory } from '@/lib/school-classes';
+import { SchoolClassFilter } from '@/components/school-class-filter';
 import { CLASS_CATALOG } from '@/lib/class-catalog';
 import { ClassGroupingNote } from '@/components/class-grouping-note';
 import {
@@ -30,6 +31,9 @@ type AudioMeta = {
 };
 
 type AttemptRow = {
+  raw_student_name?: string;
+  raw_class_name?: string;
+  class_identity_name?: string;
   id: string;
   student_name: string;
   student_id: string;
@@ -84,6 +88,7 @@ export function TeacherApp() {
   const [error, setError] = useState('');
   const [classKeyword, setClassKeyword] = useState('');
   const [classFilter, setClassFilter] = useState('');
+  const [collegeFilter, setCollegeFilter] = useState('');
   const [teacherName, setTeacherName] = useState('');
 
   useEffect(() => {
@@ -113,8 +118,8 @@ export function TeacherApp() {
   const classDirectory = useMemo(() => createClassDirectory(rows, CLASS_CATALOG.map(class_name => ({ class_name }))), [rows]);
   const classGroups = classDirectory.groups;
   const filteredRows = useMemo(
-    () => rows.filter(row => (!classFilter || classDirectory.resolve(row).key === classFilter) && classDirectory.matches(row, classKeyword)),
-    [classFilter, classKeyword, classDirectory, rows],
+    () => rows.filter(row => (!collegeFilter || classDirectory.resolve(row).college === collegeFilter) && (!classFilter || classDirectory.resolve(row).key === classFilter) && classDirectory.matches(row, classKeyword)),
+    [classFilter, collegeFilter, classKeyword, classDirectory, rows],
   );
 
   const scoredRows = filteredRows.filter((row) => row.total_score !== null);
@@ -174,7 +179,7 @@ export function TeacherApp() {
         }),
         row.student_name,
         row.student_id,
-        row.class_name,
+        row.raw_class_name ?? row.class_name,
         classDirectory.resolve(row).label,
         row.scene_title,
         row.task_score,
@@ -278,7 +283,8 @@ export function TeacherApp() {
               </p>
             </div>
 
-            <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(280px,440px)_1fr] lg:items-start">
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <SchoolClassFilter college={collegeFilter} classKey={classFilter} groups={classGroups} onCollege={setCollegeFilter} onClass={setClassFilter} className="focus-ring h-12 w-full rounded-2xl border border-[#d9c4b2] bg-[#fffaf6] px-3 text-base" />
               <label className="relative block">
                 <span className="sr-only">按班级关键词筛选</span>
                 <Search className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#7b746c]" />
@@ -311,7 +317,7 @@ export function TeacherApp() {
                 >
                   全部 · {rows.length}
                 </button>
-                {classGroups.map((group) => {
+                {classGroups.filter(group => !collegeFilter || group.college === collegeFilter).map((group) => {
                   const active = classFilter === group.key;
                   return (
                     <button
@@ -384,7 +390,7 @@ export function TeacherApp() {
                             {row.student_id}
                           </p>
                         </td>
-                        <td className="px-4 py-4"><strong>{classDirectory.resolve(row).label}</strong>{classDirectory.resolve(row).label !== row.class_name && <p className="mt-1 text-xs text-[#7a7168]">原填：{row.class_name}</p>}</td>
+                        <td className="px-4 py-4"><strong>{classDirectory.resolve(row).label}</strong>{classDirectory.resolve(row).label !== (row.raw_class_name ?? row.class_name) && <p className="mt-1 text-xs text-[#7a7168]">原填：{row.raw_class_name ?? row.class_name}</p>}</td>
                         <td className="px-4 py-4 font-bold text-[#416b36]">
                           {row.scene_title}
                         </td>

@@ -1,3 +1,4 @@
+import { projectSchoolPayload, projectSchoolSubmission } from '@/lib/school-classes';
 export const PROFILE_API_URL = 'https://cloudbase-d3gxxe4l88c3d5907-1431364187.ap-shanghai.app.tcloudbase.com/studentProfileApi';
 
 const TOKEN_KEY = 'july-english-profile.teacher-token';
@@ -33,7 +34,7 @@ export async function profileRequest<T>(action: string, data: Record<string, unk
   const response = await fetch(PROFILE_API_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action, token, ...data }),
+    body: JSON.stringify({ action, token, ...projectSchoolSubmission(data) }),
   });
   const raw = await response.text();
   let payload: T & { error?: string; message?: string };
@@ -43,7 +44,7 @@ export async function profileRequest<T>(action: string, data: Record<string, unk
     payload = {} as T & { error?: string; message?: string };
   }
   if (!response.ok) throw new Error(payload.error || payload.message || `请求失败（${response.status}），请稍后重试。`);
-  return payload;
+  return action === 'listProfiles' ? projectSchoolPayload(payload) : payload;
 }
 
 export const COLLEGE_MAJOR_OPTIONS = {
@@ -121,6 +122,9 @@ export const SKILL_LABELS = {
 export type SkillKey = keyof typeof SKILL_LABELS;
 
 export type EnglishProfile = {
+  raw_student_name?: string;
+  raw_class_name?: string;
+  class_identity_name?: string;
   id: string;
   student_name: string;
   class_name: string;

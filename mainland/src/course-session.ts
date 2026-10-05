@@ -1,3 +1,4 @@
+import { projectSchoolRecord } from '@/lib/school-classes';
 export const COURSE_SESSION_KEY = 'july.course.identity.v1';
 const COURSE_STUDENT_KEY = 'july.course.student.v1';
 type CourseStudent = {
@@ -5,6 +6,10 @@ type CourseStudent = {
   className: string;
   studentNumber?: string;
 };
+function normalizedStudent<T extends CourseStudent>(student: T): T {
+  const view = projectSchoolRecord({ student_name: student.name, class_name: student.className });
+  return { ...student, name: view.student_name, className: view.class_name };
+}
 export type CourseIdentity = {
   token: string;
   student: {
@@ -26,7 +31,7 @@ export function getCourseIdentity(): CourseIdentity | null {
       value.student?.name &&
       value.student?.className
     )
-      return value;
+      return { ...value, student: normalizedStudent(value.student) };
     localStorage.removeItem(COURSE_SESSION_KEY);
   } catch {
     /* Storage can be unavailable in private browsing. */
@@ -47,7 +52,7 @@ export function getCourseStudent(): CourseStudent | null {
       hint.student?.name &&
       hint.student?.className
     )
-      return hint.student;
+      return normalizedStudent(hint.student);
     localStorage.removeItem(COURSE_STUDENT_KEY);
   } catch {
     /* Private mode may block storage. */
@@ -57,11 +62,11 @@ export function getCourseStudent(): CourseStudent | null {
 export function rememberCourseStudent(student: CourseStudent) {
   try {
     const previousStudent = getCourseStudent();
-    const person = {
+    const person = normalizedStudent({
       ...student,
       name: student.name.trim(),
       className: student.className.trim(),
-    };
+    });
     if (
       !person.studentNumber &&
       previousStudent?.name === person.name &&

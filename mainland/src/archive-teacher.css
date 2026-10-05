@@ -478,7 +478,7 @@
 }
 .at-filters {
   display: grid;
-  grid-template-columns: 1fr 245px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 225px) minmax(0, 235px);
   gap: 14px;
   margin-bottom: 23px;
 }

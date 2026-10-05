@@ -3,6 +3,32 @@ const assert = require('node:assert/strict');
 const { createApi, PROJECT_ID, COLLECTIONS: C, LEGACY, hash } = require('../service');
 const { gradeUnit2, unit2Summary } = require('../unit2');
 
+test('school reclassification persists only reversible project mappings, never grades, audio or foreign data', async () => {
+  const original = { [LEGACY.words]: [word('own', '张三26-城轨信号54班', '城轨信号2654'), word('unknown-a', '李四', '68班'), word('unknown-b', '李四', '69班'), word('foreign', '重要学生', '城轨信号54班', { project_id: 'malaysia' }), word('malaysia-tagged', '重要学生', '城轨信号54班', { country: 'Malaysia' })] };
+  const f = fixture(original);
+  const before = JSON.stringify(f.db.rows(LEGACY.words));
+  const preview = await f.call('normalizeClasses', { token: f.tokens.july });
+  assert.equal(preview.records, 3);
+  assert.equal(preview.counts.words.default, 2);
+  assert.equal(preview.counts.words.splitNames, 1);
+  assert.equal(f.db.rows(C.classNormalization).length, 0);
+  assert.equal((await f.call('normalizeClasses', { token: f.tokens.lisa, commit: true })).status, 403);
+  const result = await f.call('normalizeClasses', { token: f.tokens.july, commit: true });
+  assert.equal(result.committed, true);
+  assert.equal(JSON.stringify(f.db.rows(LEGACY.words)), before);
+  assert.ok(f.db.writes.every(write => !Object.values(LEGACY).includes(write.collection)));
+  assert.equal(f.db.rows(C.classNormalization).length, 3);
+  const dashboard = await f.call('teacherDashboard', { token: f.tokens.july });
+  const defaults = dashboard.students.filter(student => student.className === '默认班级（测试）');
+  assert.equal(defaults.length, 2);
+  assert.equal(new Set(defaults.map(student => student.id)).size, 2);
+  assert.ok(defaults.every(student => student.historyCount === 1));
+  assert.equal(dashboard.students.find(student => student.name === '张三').className, '26-城轨信号54班');
+  await f.call('normalizeClasses', { token: f.tokens.july, commit: true });
+  assert.equal(f.db.rows(C.classNormalization).length, 3);
+  assert.equal(JSON.stringify(f.db.rows(LEGACY.words)), before);
+});
+
 test('Unit 2 submissions are server scored, idempotent and bound to the authorized student', async () => {
   const f = fixture({ [LEGACY.profiles]: [profile('keep-profile')], [LEGACY.words]: [word('keep-word')] });
   const auth = await f.authorize();

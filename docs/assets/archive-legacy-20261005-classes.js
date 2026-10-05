@@ -1,0 +1,1 @@
+System.register(["./chunks/school-class-filter-legacy-20261005-classes.js","./chunks/archive-main-legacy-20261005-classes.js"],function(s,e){return{setters:[function(s){},function(s){}],execute:function(){}}});

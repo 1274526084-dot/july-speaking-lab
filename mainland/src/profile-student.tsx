@@ -14,9 +14,10 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { getCourseStudent, rememberCourseStudent } from './course-session';
 import { StudentClassField } from '@/components/student-class-field';
+import { collegeForClass } from '@/lib/class-catalog';
+import { normalizeSchoolClass } from '@/lib/school-classes';
 import {
   COLLEGE_MAJOR_OPTIONS,
-  COLLEGE_OPTIONS,
   collegeForMajor,
   getStudentProfileKey,
   profilePath,
@@ -242,6 +243,7 @@ export function ProfileStudent() {
     ...initialForm,
     studentName: getCourseStudent()?.name || '',
     className: getCourseStudent()?.className || '',
+    college: getCourseStudent()?.className ? collegeForClass(getCourseStudent()!.className) : '',
   }));
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState('');
@@ -260,7 +262,7 @@ export function ProfileStudent() {
         if (
           identity &&
           (parsed.studentName !== identity.name ||
-            parsed.className !== identity.className)
+            normalizeSchoolClass(parsed.className || '') !== identity.className)
         )
           return;
         const isLegacyDraft =
@@ -268,7 +270,7 @@ export function ProfileStudent() {
         setForm({
           ...initialForm,
           ...parsed,
-          college: parsed.college || collegeForMajor(parsed.major || ''),
+          college: parsed.className ? collegeForClass(normalizeSchoolClass(parsed.className, parsed.major || '')) : parsed.college || collegeForMajor(parsed.major || ''),
           admissionType:
             parsed.admissionType || (isLegacyDraft ? 'gaokao' : ''),
           entranceScoreKnown:
@@ -576,29 +578,11 @@ export function ProfileStudent() {
                     required
                     value={form.className}
                     onChange={(value) => update('className', value)}
+                    onCollegeChange={(college) => setForm(current => ({ ...current, college, major: current.college === college ? current.major : '', otherMajor: current.college === college ? current.otherMajor : '' }))}
                     theme="profile"
                   />
                 </div>
                 <div className="two-columns">
-                  <label className="text-field">
-                    <span>学院 *</span>
-                    <select
-                      value={form.college}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          college: event.target.value,
-                          major: '',
-                          otherMajor: '',
-                        }))
-                      }
-                    >
-                      <option value="">请先选择学院</option>
-                      {COLLEGE_OPTIONS.map((option) => (
-                        <option key={option}>{option}</option>
-                      ))}
-                    </select>
-                  </label>
                   <label className="text-field">
                     <span>专业 *</span>
                     <select

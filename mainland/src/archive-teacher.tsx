@@ -33,8 +33,10 @@ import {
   useRef,
   useState,
 } from 'react';
-import { CLASS_CATALOG } from '@/lib/class-catalog';
-import { createClassDirectory } from '@/lib/class-groups';
+import { CLASS_CATALOG, SCHOOL_COLLEGES, collegeForClass } from '@/lib/class-catalog';
+import { StudentClassField } from '@/components/student-class-field';
+import { createSchoolClassDirectory as createClassDirectory } from '@/lib/school-classes';
+import { SchoolClassFilter } from '@/components/school-class-filter';
 import {
   buildRailwayQuiz,
   RAILWAY_QUESTION_BANK,
@@ -91,6 +93,8 @@ type Student = {
   id: string;
   name: string;
   className: string;
+  rawName?: string;
+  rawClassName?: string;
   profile?: Partial<EnglishProfile> | null;
   profileRestricted?: boolean;
   identityConflict?: boolean;
@@ -271,6 +275,9 @@ const normalize = (value: string) =>
     .replace(/[\s_-]+/g, '');
 const classRow = (student: Student) => ({
   class_name: student.className || '',
+  student_name: student.name,
+  raw_student_name: student.rawName,
+  raw_class_name: student.rawClassName,
   major: student.profile?.major,
 });
 const errorText = (error: unknown) =>
@@ -416,6 +423,7 @@ export function ArchiveTeacher() {
   const [message, setMessage] = useState('');
   const [query, setQuery] = useState('');
   const [classFilter, setClassFilter] = useState('');
+  const [collegeFilter, setCollegeFilter] = useState('');
   const [selected, setSelected] = useState<Student | null>(null);
   const [taskEditor, setTaskEditor] = useState<ArchiveTask | null>(null);
   const [newsEditor, setNewsEditor] = useState<ArchiveNews | null>(null);
@@ -495,13 +503,14 @@ export function ArchiveTeacher() {
         (student) =>
           (!classFilter ||
             directory.resolve(classRow(student)).key === classFilter) &&
+          (!collegeFilter || directory.resolve(classRow(student)).college === collegeFilter) &&
           (!query ||
             normalize(
-              `${student.name}${student.className}${student.profile?.major || ''}`,
+              `${student.name}${student.rawName || ''}${student.className}${student.rawClassName || ''}${student.profile?.major || ''}`,
             ).includes(normalize(query)) ||
             directory.matches(classRow(student), query)),
       ),
-    [data.students, classFilter, query, directory],
+    [data.students, classFilter, collegeFilter, query, directory],
   );
   const classStats = useMemo(
     () =>
@@ -696,18 +705,7 @@ export function ArchiveTeacher() {
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                   />
-                  <select
-                    aria-label="第二课班级筛选"
-                    value={classFilter}
-                    onChange={(e) => setClassFilter(e.target.value)}
-                  >
-                    <option value="">全部班级</option>
-                    {directory.groups.map((group) => (
-                      <option key={group.key} value={group.key}>
-                        {group.label}
-                      </option>
-                    ))}
-                  </select>
+                  <SchoolClassFilter college={collegeFilter} classKey={classFilter} groups={directory.groups} onCollege={setCollegeFilter} onClass={setClassFilter} />
                 </div>
                 <div className="at-table-wrap">
                   <table className="at-table">
@@ -801,18 +799,7 @@ export function ArchiveTeacher() {
                       </button>
                     )}
                   </label>
-                  <select
-                    aria-label="按班级筛选"
-                    value={classFilter}
-                    onChange={(event) => setClassFilter(event.target.value)}
-                  >
-                    <option value="">全部班级</option>
-                    {directory.groups.map((group) => (
-                      <option key={group.key} value={group.key}>
-                        {group.label}
-                      </option>
-                    ))}
-                  </select>
+                  <SchoolClassFilter college={collegeFilter} classKey={classFilter} groups={directory.groups} onCollege={setCollegeFilter} onClass={setClassFilter} />
                 </div>
                 {data.profileRestricted && (
                   <Notice>
@@ -943,6 +930,12 @@ export function ArchiveTeacher() {
                                           .label
                                       }
                                     </small>
+                                    {student.rawClassName && student.rawClassName !== student.className && (
+                                      <small>原填班级：{student.rawClassName}</small>
+                                    )}
+                                    {student.rawName && student.rawName !== student.name && (
+                                      <small>原填姓名：{student.rawName}</small>
+                                    )}
                                   </div>
                                 </div>
                               </td>
@@ -1443,18 +1436,7 @@ function AccessCard({
         <small>请让学生出示申请页面上的6位数字验证码</small>
         <strong aria-hidden="true">• • • • • •</strong>
       </div>
-      <label className="at-field">
-        <span>当面核对完整班级（年级、专业、班号）</span>
-        <input
-          value={verifiedClass}
-          onChange={(event) => {
-            setVerifiedClass(event.target.value);
-            setVerified(false);
-          }}
-          placeholder="例如：26-机车125班"
-          maxLength={100}
-        />
-      </label>
+      <StudentClassField value={verifiedClass} onChange={value => { setVerifiedClass(value); setVerified(false); }} label="当面核对完整班级" />
       <label className="at-field">
         <span>输入学生屏幕上的验证码</span>
         <input
@@ -2087,6 +2069,7 @@ function TaskComposer({
   const [count, setCount] = useState(5);
   const [rotation, setRotation] = useState(0);
   const [classQuery, setClassQuery] = useState('');
+  const [classCollege, setClassCollege] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -2101,7 +2084,7 @@ function TaskComposer({
   );
   const filteredClasses = classes.filter(
     (name) =>
-      !classQuery || classDirectory.matches({ class_name: name }, classQuery),
+      (!classCollege || collegeForClass(name) === classCollege) && (!classQuery || classDirectory.matches({ class_name: name }, classQuery)),
   );
   const available = RAILWAY_QUESTION_BANK.filter(
     (question) =>
@@ -2331,6 +2314,13 @@ function TaskComposer({
               <h3>发布到哪些班级</h3>
               <span>已选 {task.classes.length} 个</span>
             </div>
+            <label className="at-field">
+              <span>按学院选择任务班级</span>
+              <select value={classCollege} onChange={event => setClassCollege(event.target.value)}>
+                <option value="">全部学院</option>
+                {SCHOOL_COLLEGES.map(college => <option key={college}>{college}</option>)}
+              </select>
+            </label>
             <label className="at-search">
               <Search />
               <input
