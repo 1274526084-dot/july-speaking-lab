@@ -951,6 +951,7 @@ function Portfolio({ records }: { records: ArchiveHistory[] }) {
             <option value="speaking">情景口语</option>
             <option value="quiz">课堂小测</option>
             <option value="unit2">第二课测试与写作</option>
+            <option value="lesson3">第三课词组与阅读</option>
             <option value="profile">学情调查</option>
           </select>
         </label>
@@ -969,6 +970,7 @@ function Portfolio({ records }: { records: ArchiveHistory[] }) {
                     speaking: '情景口语',
                     quiz: '课堂小测',
                     unit2: '第二课',
+                    lesson3: '第三课',
                     profile: '学情调查',
                   }[row.type] || '学习记录'}
                 </span>
@@ -996,6 +998,7 @@ function Portfolio({ records }: { records: ArchiveHistory[] }) {
             ))}
             {row.type !== 'profile' &&
               row.type !== 'unit2' &&
+              row.type !== 'lesson3' &&
               !row.audio?.length &&
               row.type !== 'quiz' && (
                 <p className="archive-small">
@@ -1051,7 +1054,7 @@ function RecordFeedback({ row }: { row: ArchiveHistory }) {
   )
     return null;
   const detail = row.details as RecordFeedbackDetails;
-  if (row.type === 'unit2') {
+  if (row.type === 'unit2' || row.type === 'lesson3') {
     const content = row.details as {
       essay?: string;
       feedback?: {

@@ -108,7 +108,7 @@ export function studentReturnUrl() {
     if (!value) return '';
     const url = new URL(value, location.origin);
     return url.origin === location.origin &&
-      (/^\/july-Englishclass\/(pinglu-canal-english-quiz|irregular-verbs-game|english-tense-practice|school-writing-practice|writing-train|writing-signal|writing-energy)\.html$/.test(
+      (/^\/july-Englishclass\/(pinglu-canal-english-quiz|irregular-verbs-game|english-tense-practice|school-writing-practice|writing-train|writing-signal|writing-energy|lesson-3-vocabulary-matching|lesson-3-vocabulary-matching-2|lesson-3-reading-task1-task3)\.html$/.test(
         url.pathname,
       ) ||
         /^\/july-speaking-lab\/(student|words|profile)\/$/.test(url.pathname))

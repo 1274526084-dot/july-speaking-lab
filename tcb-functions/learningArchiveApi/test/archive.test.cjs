@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createApi, PROJECT_ID, COLLECTIONS: C, LEGACY, hash } = require('../service');
 const { gradeUnit2, unit2Summary } = require('../unit2');
+const { gradeLesson3 } = require('../lesson3');
 const { lessonProgress, courseCatalog } = require('../course');
 const { bindArchiveIdentity } = require('../archive-binding');
 
@@ -258,6 +259,58 @@ test('Unit 2 validators reject partial games and preserve writing content and mi
   assert.equal(summary.radar.verbs, null);
   assert.equal(summary.radar.writing, null);
   assert.equal(summary.completed, 2);
+});
+
+test('Lesson 3 uses the server answer key and appears only in Lesson 3 progress', async () => {
+  const f = fixture();
+  const auth = await f.authorize();
+  const items = [15, 12, 11, 9, 4, 6, 8, 14, 0, 2]
+    .map(index => ({ index, selected: 'ABCDEFGHIJKLMNOP'[index] }));
+  const payload = { studentToken: auth.studentToken, requestId: 'lesson3-matching-0001',
+    activity: 'matching1', items, score: 0 };
+  const saved = await f.call('saveLesson3Attempt', payload);
+  assert.equal(saved.submission.score, 100);
+  assert.equal((await f.call('saveLesson3Attempt', payload)).submission.id, saved.submission.id);
+  assert.equal((await f.call('saveLesson3Attempt', { ...payload, items: items.map((item, i) => ({ ...item, selected: items[(i + 1) % 10].selected })) })).status, 409);
+  assert.equal(f.db.rows(C.unit2).length, 1);
+  const student = await f.call('courseStudentScores', { studentToken: auth.studentToken });
+  assert.equal(student.courseProgress.lessons.find(row => row.lesson === 3).latest, 100);
+  assert.equal(student.courseProgress.lessons.some(row => row.lesson === 2), false);
+  const teacher = await f.call('teacherCourseScores', { token: f.tokens.july });
+  assert.equal(teacher.students.find(row => row.id === auth.studentId).courseProgress.lessons.find(row => row.lesson === 3).latest, 100);
+  const detail = await f.call('teacherStudent', { token: f.tokens.july, studentId: auth.studentId });
+  assert.equal(detail.history.find(row => row.type === 'lesson3').score, 100);
+  assert.equal(detail.unit2.attemptCount, 0);
+  assert.equal((await f.call('saveLesson3Attempt', { ...payload, requestId: 'lesson3-matching-0002', items: items.slice(0, 9) })).status, 400);
+});
+
+test('Lesson 3 reading respects 2-point and 1-point sections; pending grades stay isolated', async () => {
+  const correct = gradeLesson3({ activity: 'reading', choices: [1, 0, 2, 0, 3],
+    blanks: ['photos', 'pioneering scholars', 'space industry', 'a frustrated classmate', 'practice'] });
+  assert.equal(correct.correct, 15);
+  assert.equal(correct.score, 100);
+  assert.equal(gradeLesson3({ activity: 'reading', choices: [0, 0, 2, 0, 3],
+    blanks: ['photos', 'pioneering scholars', 'space industry', 'a frustrated classmate', 'practice'] }).correct, 13);
+  assert.throws(() => gradeLesson3({ activity: 'reading', choices: [1, 0, 2, 0, 3], blanks: ['too many words in this answer', 'x', 'x', 'x', 'x'] }));
+  const f = fixture();
+  const owner = await f.authorize();
+  const pending = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班', practice: true });
+  const answer = { studentToken: pending.practiceToken, requestId: 'lesson3-pending-0001',
+    activity: 'reading', choices: [1, 0, 2, 0, 3], blanks: ['photos', 'pioneering scholars', 'space industry', 'a frustrated classmate', 'practice'] };
+  assert.equal((await f.call('saveLesson3Attempt', answer)).pendingVerification, true);
+  assert.equal(f.db.rows(C.practiceAttempts).length, 1);
+  assert.equal((await f.call('courseStudentScores', { studentToken: owner.studentToken })).courseProgress.lessons.length, 0);
+  assert.equal((await f.call('courseStudentScores', { studentToken: pending.practiceToken })).courseProgress.lessons.find(row => row.lesson === 3).latest, 100);
+});
+
+test('the shared Lesson 3 read-aloud unit contributes to Lesson 3 progress', () => {
+  const result = lessonProgress({
+    words: [word('read-aloud', '张同学', '26-城轨信号54班', { unit_id: 'shared-word-unit', average_score: 82 })],
+    wordUnits: [{ id: 'shared-word-unit', share_code: 'TU8ZGE' }],
+  });
+  assert.equal(result.lessons.find(row => row.unit === 1 && row.lesson === 3).latest, 82);
+  assert.equal(result.lessons.some(row => row.lesson === 2), false);
+  assert.equal(result.unassignedWordCount, 0);
 });
 
 const copy = value => structuredClone(value);

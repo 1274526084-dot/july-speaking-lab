@@ -28,7 +28,7 @@ function lessonProgress({ speaking = [], words = [], wordUnits = [], unit2 = [],
     groups.get(key).rows.push({ score: Number(score), when: Number(when || 0) });
   }
   for (const row of speaking) add({ unit: 1, lesson: 1 }, `speaking:${row.scene_id}:${row.scoring_version || 'legacy'}`, row.scene_title || '校园口语', row.total_score, row.submitted_at);
-  for (const row of unit2) add({ unit: 1, lesson: 2 }, `activity:${row.activity}:${row.details?.major || ''}`, row.title || row.activity, row.score, row.created_at);
+  for (const row of unit2) add(position(row.course_unit, row.course_lesson) || { unit: 1, lesson: 2 }, `activity:${row.activity}:${row.details?.major || ''}`, row.title || row.activity, row.score, row.created_at);
   for (const row of quizzes) {
     const task = tasks.find(item => item.id === row.task_id);
     const at = position(row.course_unit || row.unit || task?.unit, row.course_lesson || row.lesson || task?.lesson);
@@ -47,6 +47,8 @@ function lessonProgress({ speaking = [], words = [], wordUnits = [], unit2 = [],
       const unique = new Map(matches.map(item => [`${item.unit}:${item.lesson}`, item]));
       if (unique.size === 1) at = [...unique.values()][0];
     }
+    if (!at && (row.unit_id === 'TU8ZGE' || wordUnits.some(unit => unit.id === row.unit_id && unit.share_code === 'TU8ZGE')))
+      at = { unit: 1, lesson: 3 };
     if (!at) { unassignedWordCount++; continue; }
     add(at, `word:${row.unit_id}`, row.unit_title || '单词跟读', row.average_score, row.submitted_at);
   }
