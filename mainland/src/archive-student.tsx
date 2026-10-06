@@ -32,6 +32,7 @@ import {
 } from './archive-api';
 import { LearningAvatar, SkillRadar } from './archive-visuals';
 import './archive-student.css';
+import './archive-entry.css';
 import {
   rememberCourseIdentity,
   getCourseIdentity,
@@ -347,7 +348,7 @@ export function ArchiveStudent() {
           </span>
           <div>
             <small>JULY · RAILWAY ENGLISH</small>
-            <strong>英语学习档案馆</strong>
+            <strong>铁路英语学习档案</strong>
           </div>
         </a>
         <div className="archive-top-actions">
@@ -383,38 +384,60 @@ export function ArchiveStudent() {
         </output>
       )}
       {!token && (
-        <div className="archive-welcome">
-          <section className="archive-welcome-story">
-            <span className="archive-eyebrow">
-              YOUR ENGLISH JOURNEY · 从校园走向铁路世界
-            </span>
-            <h1>
-              每一次开口，
-              <br />
-              都留下一站成长。
-            </h1>
-            <p>
-              在这里收藏你的学习起点、跟读录音与课堂作品。把英语学成未来岗位中用得上的沟通能力。
-            </p>
-            <div className="archive-preview-visual">
-              <LearningAvatar variant="explorer" />
-              <div>
-                <span className="archive-tag">认识自己</span>
-                <h3>看见优势，也找到下一步</h3>
-                <p>七维自评雷达图＋真实练习记录，不用一个分数定义你。</p>
-              </div>
+        <div className="archive-welcome archive-rail-entry">
+          <section className="archive-rail-story">
+            <div className="archive-rail-heading">
+              <span className="archive-eyebrow">
+                RAILWAY ENGLISH · 学习旅程
+              </span>
+              <h1>
+                下一站，
+                <br />
+                更好的英语。
+              </h1>
+              <p>从校园出发，与铁路世界对话。</p>
             </div>
-            <div className="archive-chips">
-              <span>机车与车辆</span>
-              <span>通信与信号</span>
-              <span>国际铁路交流</span>
-            </div>
+            <figure className="archive-rail-illustration">
+              {/* Fictional illustration, not a photograph of the college or its students. */}
+              {/* oxlint-disable-next-line next/no-img-element */}
+              <img
+                src={`${import.meta.env.BASE_URL}archive/railway-student-entry-20261006.webp`}
+                alt="一位男生和一位女生在安全站台上学习，身后是列车、轨道和接触网的铁路主题插画"
+                width={1200}
+                height={800}
+                fetchPriority="high"
+              />
+              <figcaption>
+                <TrainFront size={15} />
+                你的铁路英语旅程
+              </figcaption>
+            </figure>
+            <nav className="archive-rail-route" aria-label="学习旅程快捷入口">
+              <a href={sitePath('profile')}>
+                <span>
+                  <UserRound size={20} />
+                </span>
+                <strong>学情起点</strong>
+              </a>
+              <a href={sitePath('words')}>
+                <span>
+                  <Headphones size={20} />
+                </span>
+                <strong>单词跟读</strong>
+              </a>
+              <a href={sitePath()}>
+                <span>
+                  <TrainFront size={20} />
+                </span>
+                <strong>课程任务</strong>
+              </a>
+            </nav>
           </section>
-          <section className="archive-access">
+          <section className="archive-access archive-rail-ticket">
             {pending ? (
               <>
-                <span className="archive-step">设备确认 · 不用记密码</span>
-                <h2>把这个校验码给老师看</h2>
+                <span className="archive-step">候车中 · 设备确认</span>
+                <h2>请老师确认校验码</h2>
                 <p>
                   姓名：{pending.name}
                   <br />
@@ -423,14 +446,11 @@ export function ArchiveStudent() {
                 <strong className="archive-verification">
                   {pending.verificationCode}
                 </strong>
-                <p>
-                  请老师在“教师档案馆 →
-                  设备确认”核对本人和校验码。通过后，本页会自动进入。
-                </p>
+                <p>老师在“设备确认”核对后，本页自动进入。</p>
                 <small>
                   本次申请有效期至{' '}
                   {new Date(pending.expiresAt).toLocaleString('zh-CN')}
-                  。校验码不是密码，也不要发给同学。
+                  。请勿将校验码发给同学。
                 </small>
                 <button
                   className="archive-secondary"
@@ -440,13 +460,21 @@ export function ArchiveStudent() {
                     setError('');
                   }}
                 >
-                  姓名或班级填错了，重新申请
+                  修改姓名 / 班级
                 </button>
               </>
             ) : (
               <form onSubmit={requestAccess}>
-                <span className="archive-step">开启 / 找回我的档案</span>
-                <h2>不用记密码，换设备也能回来</h2>
+                <div className="archive-ticket-heading">
+                  <span className="archive-ticket-icon">
+                    <TrainFront size={23} />
+                  </span>
+                  <div>
+                    <span className="archive-step">MY LEARNING PASS</span>
+                    <h2>进入我的档案</h2>
+                  </div>
+                  <span className="archive-ticket-stamp">无需密码</span>
+                </div>
                 <label>
                   姓名
                   <input
@@ -455,13 +483,14 @@ export function ArchiveStudent() {
                     autoComplete="name"
                     value={name}
                     onChange={(event) => setName(event.target.value)}
-                    placeholder="填写你在学习任务中使用的姓名"
+                    placeholder="真实姓名（不带班级）"
                   />
                 </label>
                 <StudentClassField
                   value={className}
                   onChange={setClassName}
                   theme="profile"
+                  compactHelp
                 />
                 <label className="archive-checkbox">
                   <input
@@ -469,7 +498,7 @@ export function ArchiveStudent() {
                     checked={remember}
                     onChange={(event) => setRemember(event.target.checked)}
                   />
-                  这是我的私人设备，记住我30天（公共电脑不要勾选）
+                  私人设备记住我30天（公共设备勿选）
                 </label>
                 <label className="archive-checkbox">
                   <input
@@ -478,7 +507,7 @@ export function ArchiveStudent() {
                     checked={consent}
                     onChange={(event) => setConsent(event.target.checked)}
                   />
-                  我同意关联本人的课程学习记录，仅供本人及获授权教师查看。
+                  我同意本人及授权教师查看我的学习记录
                 </label>
                 <button
                   className="archive-primary"
@@ -486,22 +515,38 @@ export function ArchiveStudent() {
                     busy || !name.trim() || !className.trim() || !consent
                   }
                 >
-                  {busy ? '正在申请…' : '申请进入我的档案'}
+                  {busy ? '正在申请…' : '确认并申请'}
                   <ArrowRight size={18} />
                 </button>
-                <p className="archive-small">
-                  <ShieldCheck size={17} />
-                  首次或换设备由老师核对一次。不用设置、背诵或找回密码；手机丢失可请老师撤销旧设备。
-                </p>
+                <details className="archive-entry-help">
+                  <summary>
+                    <ShieldCheck size={15} />
+                    首次登录 / 换设备说明
+                  </summary>
+                  <p>
+                    填写原姓名、班级，老师确认后即可查看本人档案，不用设置密码。手机丢失可请老师撤销旧设备。
+                  </p>
+                  <p>
+                    勾选“记住我”仅适用于私人设备，有效期30天。公共电脑请勿勾选。记录仅供本人及授权教师查看。
+                  </p>
+                </details>
               </form>
             )}
             <div className="archive-existing">
-              <strong>只是来完成课堂任务？</strong>
-              <p>不用等待档案确认，原来的任务照常进入。</p>
+              <strong>直接开始练习 · 无需等待确认</strong>
               <div>
-                <a href={sitePath('profile')}>学情调查</a>
-                <a href={sitePath('words')}>单词跟读</a>
-                <a href={sitePath('student')}>Unit 1 口语</a>
+                <a href={sitePath('words')}>
+                  <Headphones size={16} />
+                  单词
+                </a>
+                <a href={sitePath('student')}>
+                  <MessageCircle size={16} />
+                  口语
+                </a>
+                <a href={sitePath()}>
+                  <TrainFront size={16} />
+                  课程
+                </a>
               </div>
             </div>
           </section>

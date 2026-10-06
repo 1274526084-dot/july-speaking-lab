@@ -17,6 +17,7 @@ type Props = {
   label?: string;
   theme?: 'words' | 'profile' | 'speaking';
   onCollegeChange?: (value: string) => void;
+  compactHelp?: boolean;
 };
 
 export function StudentClassField({
@@ -26,6 +27,7 @@ export function StudentClassField({
   label = '班级',
   theme = 'profile',
   onCollegeChange,
+  compactHelp = false,
 }: Props) {
   const id = useId();
   const canonical = value ? normalizeSchoolClass(value) : '';
@@ -79,10 +81,19 @@ export function StudentClassField({
           <option key={option}>{option}</option>
         ))}
       </select>
-      <p id={`${id}-help`} className={styles.hint}>
-        姓名只填真实姓名，不要附上班级。找不到班级时，选择默认学院中的
-        {DEFAULT_CLASS}，请老师核对。
-      </p>
+      {compactHelp ? (
+        <details className={styles.hint}>
+          <summary>找不到班级？</summary>
+          <p id={`${id}-help`}>
+            选择默认学院中的{DEFAULT_CLASS}，请老师核对。姓名不附班级。
+          </p>
+        </details>
+      ) : (
+        <p id={`${id}-help`} className={styles.hint}>
+          姓名只填真实姓名，不要附上班级。找不到班级时，选择默认学院中的
+          {DEFAULT_CLASS}，请老师核对。
+        </p>
+      )}
       {value && selectedClass === DEFAULT_CLASS && (
         <p className={styles.warning}>
           此记录暂归测试班；原填信息和已有成绩仍然保留。

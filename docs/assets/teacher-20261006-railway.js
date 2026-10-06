@@ -1,0 +1,1 @@
+import'data:text/javascript,"assets/teacher-20261006-railway.js";if(!import.meta.resolve)throw Error("import.meta.resolve not supported")';export function __vite_legacy_guard(){import.meta.url,import("_").catch(()=>1),async function*(){}().next()}import"./chunks/school-class-filter-20261006-railway.js";import"./chunks/main-20261006-railway.js";

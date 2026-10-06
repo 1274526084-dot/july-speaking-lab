@@ -1,0 +1,1 @@
+System.register(["./chunks/school-class-filter-legacy-20261006-railway.js","./chunks/word-main-legacy-20261006-railway.js"],function(e,n){return{setters:[function(e){},function(e){}],execute:function(){}}});

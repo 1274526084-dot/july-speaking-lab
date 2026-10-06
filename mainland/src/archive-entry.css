@@ -1,0 +1,248 @@
+/* Railway entry only. The independent word/speaking pages and archive data are unchanged. */
+.archive-rail-entry {
+  max-width: 1200px;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 48px;
+  padding: 42px 30px 48px;
+  align-items: center;
+}
+.archive-rail-heading h1 {
+  font-size: clamp(32px, 3.5vw, 46px);
+  line-height: 1.22;
+  letter-spacing: -1px;
+  font-weight: 750;
+  margin: 15px 0 12px;
+}
+.archive-rail-heading > p {
+  font-size: 14px;
+}
+.archive-rail-illustration {
+  position: relative;
+  overflow: hidden;
+  margin: 22px 0 20px;
+  background: #e7eee0;
+  border-radius: 28px 28px 18px 18px;
+  border: 1px solid #dce5d6;
+  aspect-ratio: 3 / 2;
+}
+.archive-rail-illustration img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.archive-rail-illustration figcaption {
+  position: absolute;
+  bottom: 14px;
+  left: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: #fffffff0;
+  font-size: 11px;
+  font-weight: 650;
+  color: #2d5847;
+}
+.archive-rail-route {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  position: relative;
+  margin: 0 4px;
+}
+.archive-rail-route::before {
+  content: '';
+  position: absolute;
+  left: 16%;
+  right: 16%;
+  top: 24px;
+  height: 5px;
+  border-top: 1px solid #c5d7be;
+  border-bottom: 1px solid #c5d7be;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 8px,
+    #c5d7be 8px 10px
+  );
+}
+.archive-rail-route a {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  position: relative;
+  padding: 0 8px 7px;
+  border-radius: 12px;
+}
+.archive-rail-route a > span {
+  display: grid;
+  place-items: center;
+  width: 49px;
+  height: 49px;
+  border-radius: 50%;
+  background: #f8f8f1;
+  border: 1px solid #d2dfcb;
+  color: #356c51;
+}
+.archive-rail-route strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+.archive-rail-route a:hover > span {
+  background: #e6eedf;
+}
+.archive-rail-ticket {
+  padding: 28px;
+  border-radius: 24px;
+}
+.archive-ticket-heading {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 24px !important;
+  padding-bottom: 20px;
+  border-bottom: 1px dashed #d8e2d0;
+}
+.archive-ticket-heading > div {
+  flex: 1;
+}
+.archive-ticket-icon {
+  display: grid;
+  place-items: center;
+  width: 43px;
+  height: 49px;
+  border-radius: 13px;
+  color: #315c43;
+  background: #edf3e7;
+  flex-shrink: 0;
+}
+.archive-ticket-heading h2 {
+  margin: 6px 0 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+.archive-ticket-heading .archive-step {
+  font-size: 9px;
+  letter-spacing: 1.5px;
+}
+.archive-ticket-stamp {
+  border: 1px solid #dbb586;
+  padding: 7px 8px;
+  border-radius: 7px;
+  color: #a1713b;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.archive-rail-ticket form > label,
+.archive-rail-ticket form > div {
+  margin-bottom: 16px;
+}
+.archive-rail-ticket .archive-checkbox {
+  font-size: 11px;
+  line-height: 1.7;
+}
+.archive-rail-ticket .archive-primary {
+  padding: 13px 18px;
+  font-size: 14px;
+}
+.archive-entry-help {
+  margin-top: 14px;
+  font-size: 11px;
+  color: #7c8877;
+}
+.archive-entry-help summary {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  cursor: pointer;
+  padding: 3px 0;
+}
+.archive-entry-help p {
+  margin-top: 9px;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.archive-rail-ticket .archive-existing {
+  margin-top: 20px;
+  padding-top: 18px;
+  font-size: 11px;
+}
+.archive-rail-ticket .archive-existing > div {
+  gap: 12px;
+  margin-top: 12px;
+}
+.archive-rail-ticket .archive-existing a {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  border-radius: 9px;
+  background: #f2f5ee;
+  padding: 8px 11px;
+  font-size: 12px;
+}
+@media (max-width: 900px) {
+  .archive-rail-entry {
+    grid-template-columns: 1.05fr 1fr;
+    gap: 25px;
+    padding: 30px 22px;
+  }
+  .archive-rail-ticket {
+    padding: 22px;
+  }
+  .archive-ticket-heading {
+    flex-wrap: wrap;
+  }
+  .archive-ticket-heading h2 {
+    font-size: 20px;
+  }
+}
+@media (max-width: 640px) {
+  .archive-rail-entry {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 25px;
+    padding: 26px 18px 32px;
+  }
+  .archive-rail-heading h1 {
+    font-size: 32px;
+    margin: 12px 0 10px;
+  }
+  .archive-rail-heading h1 br {
+    display: none;
+  }
+  .archive-rail-heading > p {
+    font-size: 12px;
+  }
+  .archive-rail-heading .archive-eyebrow {
+    font-size: 9px;
+    letter-spacing: 1.3px;
+  }
+  .archive-rail-illustration {
+    margin: 18px 0 17px;
+    border-radius: 22px;
+  }
+  .archive-rail-route a > span {
+    width: 42px;
+    height: 42px;
+  }
+  .archive-rail-route::before {
+    top: 21px;
+  }
+  .archive-rail-route strong {
+    font-size: 11px;
+  }
+  .archive-rail-ticket {
+    padding: 22px 20px;
+  }
+  .archive-ticket-heading {
+    flex-wrap: nowrap;
+    margin-bottom: 20px !important;
+  }
+  .archive-ticket-heading h2 {
+    font-size: 20px;
+  }
+  .archive-ticket-stamp {
+    font-size: 9px;
+    padding: 6px;
+  }
+}
