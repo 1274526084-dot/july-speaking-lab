@@ -38,7 +38,6 @@ import {
   SCHOOL_COLLEGES,
   collegeForClass,
 } from '@/lib/class-catalog';
-import { StudentClassField } from '@/components/student-class-field';
 import { createSchoolClassDirectory as createClassDirectory } from '@/lib/school-classes';
 import { SchoolClassFilter } from '@/components/school-class-filter';
 import {
@@ -52,6 +51,7 @@ import { getTeacherToken, sitePath } from './api';
 import { ArchiveError, archiveRequest, type Unit2Summary } from './archive-api';
 import { Unit2Panel } from './unit2-panel';
 import { CourseBoard } from './course-board';
+import { ClassroomAccess } from './classroom-access';
 import { type ArchiveTask as CourseTask } from './archive-api';
 import { LearningAvatar, SkillRadar } from './archive-visuals';
 import { type EnglishProfile, SKILL_LABELS } from './profile-api';
@@ -418,9 +418,11 @@ function Dialog({
 
 export function ArchiveTeacher() {
   const [tab, setTab] = useState<Tab>(() =>
-    new URLSearchParams(location.search).get('tab') === 'unit2'
-      ? 'unit2'
-      : 'students',
+    new URLSearchParams(location.search).get('tab') === 'devices'
+      ? 'devices'
+      : new URLSearchParams(location.search).get('tab') === 'unit2'
+        ? 'unit2'
+        : 'students',
   );
   const [data, setData] = useState<Dashboard>({
     students: [],
@@ -1168,32 +1170,12 @@ export function ArchiveTeacher() {
                 <section className="at-section-heading">
                   <div>
                     <p className="at-eyebrow">04 / TRUSTED ACCESS</p>
-                    <h2>确认本人，再连接档案</h2>
-                    <p>新设备无需学生设置密码，由教师当面确认后授权。</p>
+                    <h2>学生进入申请</h2>
+                    <p>学生先完成任务，课后核对本人和申请设备，再确认归档。</p>
                   </div>
                   <span className="at-pill">{pending.length} 项待确认</span>
                 </section>
-                <Notice>
-                  <ShieldCheck />
-                  请当面核对学生姓名、班级，以及学生设备上显示的短验证码。逐个输入匹配后批准，有效期30天。遗失或共用设备可在个人档案中撤销。
-                </Notice>
-                {pending.length ? (
-                  <div className="at-access-grid">
-                    {pending.map((request, index) => (
-                      <AccessCard
-                        key={request.id || request.requestId || index}
-                        request={request}
-                        students={data.students}
-                        incomplete={Boolean(data.hasMore)}
-                        onSaved={saved}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <Empty title="当前没有待确认的设备">
-                    学生在新设备上申请访问档案后，会出现在这里。点击“刷新数据”获取最新申请。
-                  </Empty>
-                )}
+                <ClassroomAccess expanded onChanged={() => void load(true)} />
               </>
             )}
           </>
@@ -1265,175 +1247,6 @@ function Status({ status }: { status: string }) {
     <span className={`at-status ${status === 'published' ? 'published' : ''}`}>
       {status === 'published' ? '已发布' : '草稿'}
     </span>
-  );
-}
-
-function AccessCard({
-  request,
-  students,
-  incomplete,
-  onSaved,
-}: {
-  request: AccessRequest;
-  students: Student[];
-  incomplete: boolean;
-  onSaved: (message: string) => Promise<void>;
-}) {
-  const [code, setCode] = useState('');
-  const [verified, setVerified] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const requestId = request.requestId || request.id;
-  const studentName =
-    request.studentName || request.name || request.student?.name || '学生';
-  const [verifiedClass, setVerifiedClass] = useState(
-    request.className || request.student?.className || '',
-  );
-  const matches = /^\d{6}$/.test(code.trim());
-  const directory = useMemo(
-    () =>
-      createClassDirectory(
-        students.map(classRow),
-        CLASS_CATALOG.map((class_name) => ({ class_name })),
-      ),
-    [students],
-  );
-  const conflict = students.some(
-    (student) =>
-      student.identityConflict &&
-      normalize(student.name) === normalize(studentName) &&
-      directory.matches(classRow(student), verifiedClass),
-  );
-  const approvalBlocked = incomplete || conflict;
-  async function act(action: 'approveAccess' | 'rejectAccess') {
-    if (
-      busy ||
-      !requestId ||
-      (action === 'approveAccess' && (!matches || !verified || approvalBlocked))
-    )
-      return;
-    if (
-      action === 'rejectAccess' &&
-      !window.confirm(`拒绝 ${studentName} 的这次设备申请？学生可以重新申请。`)
-    )
-      return;
-    setBusy(true);
-    setError('');
-    try {
-      await archiveRequest(
-        action,
-        {
-          requestId,
-          ...(action === 'approveAccess'
-            ? {
-                verificationCode: code.trim().toUpperCase(),
-                identityVerified: true,
-                name: studentName,
-                className: verifiedClass.trim(),
-              }
-            : {}),
-        },
-        getTeacherToken(),
-      );
-      await onSaved(
-        action === 'approveAccess'
-          ? `${studentName} 的设备已获准访问，授权有效期30天。`
-          : '已拒绝本次申请。',
-      );
-    } catch (requestError) {
-      setError(errorText(requestError));
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <article className="at-access-card">
-      <div className="at-access-heading">
-        <span>
-          <Smartphone />
-        </span>
-        <div>
-          <h3>{studentName}</h3>
-          <p>
-            {request.className || request.student?.className || '未填写班级'}
-          </p>
-        </div>
-        <span className="at-status">待确认</span>
-      </div>
-      <p className="at-muted">
-        {request.deviceLabel || '新设备'} · {formatDate(request.createdAt)}
-      </p>
-      {conflict && (
-        <Notice danger>
-          <ShieldCheck />
-          该班级的同名记录出现不同学号，不能批准访问。请先核对原始学号与档案归属，完成更正后刷新；系统不会猜测或合并身份。
-        </Notice>
-      )}
-      {incomplete && (
-        <Notice danger>档案尚未完整读取，暂不能安全核验身份或批准设备。</Notice>
-      )}
-      <div className="at-code-reference">
-        <small>请让学生出示申请页面上的6位数字验证码</small>
-        <strong aria-hidden="true">• • • • • •</strong>
-      </div>
-      <StudentClassField
-        value={verifiedClass}
-        onChange={(value) => {
-          setVerifiedClass(value);
-          setVerified(false);
-        }}
-        label="当面核对完整班级"
-      />
-      <label className="at-field">
-        <span>输入学生屏幕上的验证码</span>
-        <input
-          value={code}
-          onChange={(event) => setCode(event.target.value.toUpperCase())}
-          placeholder="当面核对后手动输入"
-          autoComplete="off"
-          inputMode="numeric"
-          pattern="[0-9]{6}"
-          maxLength={6}
-          spellCheck={false}
-        />
-      </label>
-      <label className="at-checkbox">
-        <input
-          type="checkbox"
-          checked={verified}
-          disabled={approvalBlocked}
-          onChange={(event) => setVerified(event.target.checked)}
-        />
-        <span>已当面确认是该学生本人及其当前设备</span>
-      </label>
-      {error && <Notice danger>{error}</Notice>}
-      <div className="at-form-actions">
-        <button
-          type="button"
-          className="at-secondary"
-          disabled={busy || !requestId}
-          onClick={() => void act('rejectAccess')}
-        >
-          拒绝本次申请
-        </button>
-        <button
-          type="button"
-          className="at-primary"
-          disabled={
-            busy ||
-            !matches ||
-            !verified ||
-            !requestId ||
-            !verifiedClass.trim() ||
-            approvalBlocked
-          }
-          onClick={() => void act('approveAccess')}
-        >
-          {busy ? <LoaderCircle className="at-spin" /> : <ShieldCheck />}
-          批准30天
-        </button>
-      </div>
-    </article>
   );
 }
 

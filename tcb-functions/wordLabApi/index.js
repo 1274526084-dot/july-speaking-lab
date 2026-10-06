@@ -681,11 +681,12 @@ async function handleStudentStart(event, body) {
     return response(event, 400, { ok: false, error: '请填写姓名和班级，并同意上传本次练习录音。' });
   }
   const id = randomUUID();
+  const binding = await require('./archive-binding').bindArchiveIdentity(db, body.studentToken, { name: studentName, className });
   const submitToken = randomBytes(24).toString('hex');
   await db.collection(ATTEMPTS).doc(id).set({
     project_id: PROJECT_ID, data_region: DATA_REGION, module_id: 'semester-word-practice', schema_version: 2,
     id, unit_id: unit.id, unit_title: unit.title, teacher_id: unit.teacher_id, teacher_name: unit.teacher_name,
-    student_name: studentName, class_name: className, status: 'practicing',
+    student_name: studentName, class_name: className, status: 'practicing', ...binding,
     results_json: '[]', submit_token_hash: sha256(submitToken), started_at: Date.now(), submitted_at: null,
   });
   return response(event, 200, { ok: true, attemptId: id, submitToken });
@@ -869,6 +870,7 @@ async function handleStudentSubmitWord(event, body) {
 async function handleStudentComplete(event, body) {
   const attempt = await studentAttempt(body);
   if (!attempt) return response(event, 401, { ok: false, error: '本次练习已失效，请重新进入单元。' });
+  if (attempt.status === 'completed') return response(event, 200, { ok: true, averageScore: attempt.average_score, averageSelf: attempt.average_self, wordCount: parseJson(attempt.results_json || '[]', []).length });
   const unit = await getDocument(UNITS, attempt.unit_id);
   const words = cleanWords(parseJson(unit?.words_json || '[]', []));
   const results = parseJson(attempt.results_json || '[]', []);
@@ -876,7 +878,7 @@ async function handleStudentComplete(event, body) {
   const averageScore = Math.round(results.reduce((sum, item) => sum + Number(item.system_score || 0), 0) / results.length);
   const averageSelf = Number((results.reduce((sum, item) => sum + Number(item.self_rating || 0), 0) / results.length).toFixed(1));
   const submittedAt = Date.now();
-  await db.collection(ATTEMPTS).doc(attempt.id).update({ status: 'completed', average_score: averageScore, average_self: averageSelf, submitted_at: submittedAt });
+  await db.collection(ATTEMPTS).doc(attempt.id).update({ status: 'completed', average_score: averageScore, average_self: averageSelf, submitted_at: submittedAt, score_kind: 'practice-reference', requires_teacher_review: results.some(item => item.scoring_mode !== 'speech-recognition') });
   return response(event, 200, { ok: true, averageScore, averageSelf, wordCount: results.length });
 }
 
@@ -979,7 +981,7 @@ exports.main = async (event) => {
     if (action === 'teacherUploadReference') return handleTeacherUploadReference(event, body);
     if (action === 'teacherPublishUnit') return handleTeacherPublish(event, body);
     if (action === 'studentGetUnit') return handleStudentGetUnit(event, body);
-    if (action === 'studentStart') return handleStudentStart(event, body);
+    if (action === 'studentStart') return await handleStudentStart(event, body);
     if (action === 'recognizeWordChunk') return handleRecognizeWordChunk(event, body);
     if (action === 'studentPrepareWordUpload') return handleStudentPrepareWordUpload(event, body);
     if (action === 'studentConfirmWord') return handleStudentConfirmWord(event, body);
@@ -993,6 +995,7 @@ exports.main = async (event) => {
     if (action === 'adminDeleteUnit') return handleAdminDeleteUnit(event, body);
     return response(event, 404, { ok: false, error: '未知操作。' });
   } catch (error) {
+    if (error?.status === 401) return response(event, 401, { ok: false, error: error.message });
     console.error('wordLab API failed', error?.stack || error?.message || error);
     return response(event, 500, { ok: false, error: '服务暂时不可用，请稍后重试。' });
   }

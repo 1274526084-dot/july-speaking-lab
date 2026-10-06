@@ -320,8 +320,10 @@ async function handleSubmit(event, body) {
   if (!profile.student_name || !profile.class_name || !profile.major || !profile.admission_type || !profile.entrance_score_valid || !profile.weekly_time || !profile.learning_goals.length || !profile.major_reasons.length || !profile.school_reasons.length || !profile.device_ready) {
     return response(event, 400, { ok: false, error: '还有必填问题未完成，请检查后再提交。' });
   }
-  const id = `profile-${sha256(`${PROJECT_ID}|${normalizeIdentity(profile.class_name)}|${normalizeIdentity(profile.student_name)}`).slice(0, 48)}`;
-  const now = Date.now(); const existing = await getDocument(PROFILES, id);
+  const binding = await require('./archive-binding').bindArchiveIdentity(db, body.studentToken, { name: profile.student_name, className: profile.class_name });
+  // Append a new version; a public name/class can never overwrite a survey.
+  const id = `profile-${randomBytes(24).toString('hex')}`;
+  const now = Date.now();
   const row = {
     id,
     project_id: PROJECT_ID,
@@ -329,6 +331,7 @@ async function handleSubmit(event, body) {
     module_id: 'semester-profile',
     schema_version: 2,
     ...profile,
+    ...binding,
     skills_json: JSON.stringify(profile.skills),
     current_habits_json: JSON.stringify(profile.current_habits),
     learning_goals_json: JSON.stringify(profile.learning_goals),
@@ -336,8 +339,8 @@ async function handleSubmit(event, body) {
     difficulties_json: JSON.stringify(profile.difficulties),
     major_reasons_json: JSON.stringify(profile.major_reasons),
     school_reasons_json: JSON.stringify(profile.school_reasons),
-    created_at: Number(existing?.created_at || now),
-    submitted_at: Number(existing?.submitted_at || now),
+    created_at: now,
+    submitted_at: now,
     updated_at: now,
   };
   delete row.skills;
@@ -407,7 +410,7 @@ exports.main = async (event) => {
   try {
     await ensureCollections();
     const body = parseBody(event); const action = cleanText(body.action, 40);
-    if (action === 'submitProfile') return handleSubmit(event, body);
+    if (action === 'submitProfile') return await handleSubmit(event, body);
     if (action === 'teacherLogin') return handleLogin(event, body);
     if (action === 'session') {
       const session = await validSession(body.token);
@@ -420,6 +423,7 @@ exports.main = async (event) => {
     }
     return response(event, 404, { ok: false, error: '未知操作。' });
   } catch (error) {
+    if (error?.status === 401) return response(event, 401, { ok: false, error: error.message });
     console.error('studentProfileApi failed', error?.message || error);
     return response(event, 500, { ok: false, error: '服务暂时不可用，请稍后重试。' });
   }

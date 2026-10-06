@@ -1,0 +1,1 @@
+import'data:text/javascript,"assets/wordTeacher-20261006-classroom.js";if(!import.meta.resolve)throw Error("import.meta.resolve not supported")';export function __vite_legacy_guard(){import.meta.url,import("_").catch(()=>1),async function*(){}().next()}import"./chunks/school-class-filter-20261006-classroom.js";import"./chunks/word-main-20261006-classroom.js";

@@ -3,6 +3,126 @@ const assert = require('node:assert/strict');
 const { createApi, PROJECT_ID, COLLECTIONS: C, LEGACY, hash } = require('../service');
 const { gradeUnit2, unit2Summary } = require('../unit2');
 const { lessonProgress, courseCatalog } = require('../course');
+const { bindArchiveIdentity } = require('../archive-binding');
+
+test('new devices can work before approval without reading or changing the claimed historical archive', async () => {
+  const f = fixture({ [LEGACY.words]: [word('original', '张同学', '26-城轨信号54班', { average_score: 60 })] });
+  const owner = await f.authorize();
+  const task = (await f.call('saveTask', { token: f.tokens.july, task: quiz() })).task;
+  const pending = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班', practice: true });
+  assert.equal(pending.verified, false);
+  assert.match(pending.practiceToken, /^[a-f0-9]{64}$/);
+  for (const action of ['studentDashboard','saveReflection']) assert.equal((await f.call(action, { studentToken: pending.practiceToken })).status, 401);
+  const result = await f.call('submitQuiz', { studentToken: pending.practiceToken, taskId: task.id, taskVersion: task.version, requestId: 'pending-quiz-0001', answers: [0,0], score: 999 });
+  assert.equal(result.submission.score, 50);
+  assert.equal(result.pendingVerification, true);
+  assert.equal(f.db.rows(C.submissions).length, 0);
+  assert.equal(f.db.rows(C.practiceAttempts).length, 1);
+  const protectedArchive = await f.call('studentDashboard', { studentToken: owner.studentToken });
+  assert.equal(protectedArchive.history.length, 1);
+  assert.equal(protectedArchive.history[0].score, 60);
+  const own = await f.call('courseStudentScores', { studentToken: pending.practiceToken });
+  assert.equal(own.courseProgress.lessons[0].latest, 50);
+  assert.equal(own.history, undefined);
+  const stranger = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班', practice: true });
+  assert.equal((await f.call('courseStudentScores', { studentToken: stranger.practiceToken })).courseProgress.lessons.length, 0);
+  assert.equal((await f.call('submitQuiz', { studentToken: stranger.practiceToken, taskId: task.id, taskVersion: task.version, requestId: 'pending-quiz-0001', answers: [0,1] })).status, 409);
+});
+
+test('approval links immutable pending records once, preserves originals, and revocation blocks both credentials', async () => {
+  const originals = [word('keep-word')];
+  const f = fixture({ [LEGACY.words]: originals });
+  const pending = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班', practice: true });
+  const payload = { studentToken: pending.practiceToken, requestId: 'pending-unit2-0001', activity: 'pinglu', answers: Array(10).fill('wrong'), score: 100 };
+  const saved = await f.call('saveUnit2Attempt', payload);
+  assert.equal(saved.submission.score, 0);
+  assert.equal((await f.call('saveUnit2Attempt', payload)).submission.id, saved.submission.id);
+  assert.equal(f.db.rows(C.practiceAttempts).length, 1);
+  const ledger = structuredClone(f.db.rows(C.practiceAttempts));
+  const list = await f.call('listAccessRequests', { token: f.tokens.july, pendingOnly:true });
+  assert.equal(list.requests[0].practiceCount, 1);
+  await f.call('approveAccess', { token:f.tokens.july, requestId:pending.requestId, approvalMode:'classroom-confirmation', identityVerified:true });
+  const approved = await f.call('accessStatus', { requestToken:pending.requestToken });
+  const archive = await f.call('studentDashboard', { studentToken:approved.studentToken });
+  assert.equal(archive.history.filter(row => row.type === 'unit2').length, 1);
+  assert.equal(archive.unit2.stages.pinglu.latest, 0);
+  assert.equal((await f.call('saveUnit2Attempt', { ...payload, studentToken:approved.studentToken })).submission.id, saved.submission.id);
+  assert.deepEqual(f.db.rows(C.practiceAttempts), ledger);
+  assert.deepEqual(f.db.rows(LEGACY.words), originals);
+  const request = f.db.rows(C.requests).find(row => row.id === pending.requestId);
+  await f.call('revokeDevice', { token:f.tokens.july, sessionId:request.session_id });
+  assert.equal((await f.call('courseSession', { studentToken:pending.practiceToken })).status, 401);
+  assert.equal((await f.call('studentDashboard', { studentToken:approved.studentToken })).status, 401);
+  await assert.rejects(bindArchiveIdentity(f.db,pending.practiceToken,{name:'张同学',className:'26-城轨信号54班'},f.time()), /撤销/);
+  assert.deepEqual(f.db.rows(C.practiceAttempts), ledger);
+});
+
+test('rejected and expired practice credentials cannot write, while evidence remains stored', async () => {
+  const f = fixture();
+  const request = await f.call('requestAccess', { name:'临时学生', className:'26-城轨信号54班', practice:true });
+  const payload = { studentToken:request.practiceToken, requestId:'reject-preserve-0001', activity:'pinglu', answers:Array(10).fill('wrong') };
+  await f.call('saveUnit2Attempt', payload);
+  await f.call('rejectAccess', { token:f.tokens.july, requestId:request.requestId });
+  assert.equal((await f.call('saveUnit2Attempt',{...payload,requestId:'reject-preserve-0002'})).status,401);
+  assert.equal(f.db.rows(C.practiceAttempts).length,1);
+  const expired = await f.call('requestAccess', { name:'第二学生', className:'26-城轨信号54班', practice:true });
+  f.advance(7200001);
+  assert.equal((await f.call('courseSession',{studentToken:expired.practiceToken})).status,401);
+  assert.equal((await f.call('accessStatus',{requestToken:expired.requestToken})).status,'pending');
+  assert.equal((await f.call('startPractice',{requestToken:expired.requestToken})).ok,true);
+});
+
+test('word, speaking and survey credentials are validated by the server, never a client ownership flag', async () => {
+  const f = fixture();
+  const owner = await f.authorize();
+  const person = {name:'张同学',className:'城轨信号54班'};
+  const binding = await bindArchiveIdentity(f.db,owner.studentToken,person,f.time());
+  assert.equal(binding.archive_student_id,owner.studentId);
+  assert.equal(binding.archive_binding,'verified');
+  assert.equal((await bindArchiveIdentity(f.db,'',person,f.time())).archive_binding,'unverified');
+  await assert.rejects(bindArchiveIdentity(f.db,'e'.repeat(64),person,f.time()), /到期/);
+  await assert.rejects(bindArchiveIdentity(f.db,owner.studentToken,{...person,name:'另一人'},f.time()), /不一致/);
+  await assert.rejects(bindArchiveIdentity(f.db,owner.studentToken,{...person,className:'26-城轨信号55班'},f.time()), /不一致/);
+  const pending = await f.call('requestAccess',{name:'张同学',className:'26-城轨信号54班',practice:true});
+  const temp = await bindArchiveIdentity(f.db,pending.practiceToken,person,f.time());
+  assert.equal(temp.archive_request_id,pending.requestId);
+  assert.equal(temp.archive_student_id,undefined);
+  assert.equal(JSON.stringify([...f.db.rows(C.sessions),...f.db.rows(C.practiceSessions)]).includes(owner.studentToken),false);
+});
+
+test('new unverified or pending legacy-channel submissions cannot poison any formal archive or radar', async () => {
+  const f = fixture({[LEGACY.words]:[word('keep','张同学','26-城轨信号54班',{average_score:60})]});
+  // Use actual name/class labels, as an impersonator would.
+  const owner = await f.authorize();
+  const pending = await f.call('requestAccess',{name:'张同学',className:'26-城轨信号54班',practice:true});
+  for (const [id,mode] of [['impostor','unverified'],['waiting','pending']]) {
+    await f.db.collection(LEGACY.words).doc(id).set(word(id,'张同学','26-城轨信号54班',{average_score:0,archive_binding_version:1,archive_binding:mode,archive_request_id:pending.requestId}));
+    await f.db.collection(LEGACY.profiles).doc(id).set(profile(id,'张同学','26-城轨信号54班',{archive_binding_version:1,archive_binding:mode,archive_request_id:pending.requestId,skills_json:'{"speaking":1}'}));
+  }
+  const before = await f.call('studentDashboard',{studentToken:owner.studentToken});
+  assert.equal(before.history.length,1);
+  assert.equal(before.summary.wordAverage,60);
+  assert.equal(before.profile,null);
+  const own = await f.call('courseStudentScores',{studentToken:pending.practiceToken});
+  assert.equal(own.courseProgress.unassignedWordCount,1);
+  const evidence = structuredClone(f.db.rows(LEGACY.words));
+  await f.call('approveAccess',{token:f.tokens.july,requestId:pending.requestId,approvalMode:'classroom-confirmation',identityVerified:true});
+  const after = await f.call('studentDashboard',{studentToken:owner.studentToken});
+  assert.ok(after.history.some(row => row.id === 'word:waiting'));
+  assert.ok(!after.history.some(row => row.id === 'word:impostor'));
+  assert.equal(after.profile.id,'waiting');
+  assert.deepEqual(f.db.rows(LEGACY.words),evidence);
+});
+
+test('speaking reference score is server-derived, ignores browser confidence, and does not score missing text zero', () => {
+  const {gradeSpeaking} = require('../../speakingLabApi/scoring');
+  const transcript = "Student · Round 1: Hi! I'm Chen Yu. Nice to meet you!\nPartner: question\nStudent · Round 2: My major is rail signaling technology.\nStudent · Round 3: I like playing football. Shall we add each other on WeChat?";
+  const score = gradeSpeaking('dormitory',transcript);
+  assert.equal(score.total_score,100);
+  assert.equal(score.clarity_score,null);
+  assert.equal(gradeSpeaking('dormitory',transcript.replace("Hi! I'm Chen Yu. Nice to meet you!",'本轮回答录音已保存（手机未返回识别文字）')).total_score,null);
+  assert.equal(gradeSpeaking('dormitory','Student · Round 1: Hello').requires_teacher_review,true);
+});
 
 test('units persist three lessons and current lesson without changing existing student data', async () => {
   const f = fixture({ [LEGACY.words]: [word('original-word')] });
@@ -272,6 +392,45 @@ test('name and class request reveals no data; approval requires identity acknowl
   const stored = JSON.stringify(f.db.rows(C.requests));
   assert.equal(stored.includes(request.requestToken), false);
   assert.equal(stored.includes(request.verificationCode), false);
+});
+
+test('classroom confirmation requires a current teacher and identity check but no numeric code', async () => {
+  const original = [word('unchanged-audio')];
+  const f = fixture({ [LEGACY.words]: original });
+  const request = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班' });
+  const body = { requestId: request.requestId, approvalMode: 'classroom-confirmation', identityVerified: true };
+  assert.equal((await f.call('approveAccess', body)).status, 401);
+  assert.equal((await f.call('approveAccess', { ...body, token: f.tokens.july, identityVerified: false })).status, 400);
+  assert.equal((await f.call('approveAccess', { ...body, token: f.tokens.july, name: '别的学生' })).status, 400);
+  assert.equal((await f.call('approveAccess', { ...body, token: f.tokens.lisa })).ok, true);
+  const status = await f.call('accessStatus', { requestToken: request.requestToken });
+  assert.equal(status.status, 'approved');
+  assert.equal((await f.call('studentDashboard', { studentToken: status.studentToken })).history.length, 1);
+  assert.equal(f.db.rows(C.requests)[0].approval_method, 'classroom-confirmation');
+  assert.deepEqual(f.db.rows(LEGACY.words), original);
+  assert.equal((await f.call('approveAccess', { ...body, token: f.tokens.july })).status, 409);
+});
+
+test('live pending list hides processed, expired and foreign requests without issuing student credentials', async () => {
+  const f = fixture();
+  await f.authorize();
+  const expired = await f.call('requestAccess', { name: '过期学生', className: '26-城轨信号54班' });
+  f.advance(86400001);
+  await f.call('requestAccess', { name: '新申请', className: '26-城轨信号54班' });
+  const list = await f.call('listAccessRequests', { token: f.tokens.cherie, pendingOnly: true });
+  assert.equal(list.requests.length, 1);
+  assert.equal(list.requests[0].name, '新申请');
+  assert.equal(list.requests.some(row => row.id === expired.requestId), false);
+  assert.ok(!JSON.stringify(list).includes('requestToken'));
+  assert.ok(!JSON.stringify(list).includes('verificationCode'));
+  assert.equal((await f.call('listAccessRequests', { pendingOnly: true })).status, 401);
+});
+
+test('classroom confirmation still blocks conflicting student identities', async () => {
+  const f = fixture({ [LEGACY.speaking]: ['a','b'].map((student_id, index) => ({ id: student_id, project_id: PROJECT_ID, student_name: '张同学', class_name: '26-城轨信号54班', student_id, scene_id: 'dorm', total_score: 80, submitted_at: index + 1 })) });
+  const request = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班' });
+  assert.equal((await f.call('approveAccess', { token: f.tokens.july, requestId: request.requestId, approvalMode: 'classroom-confirmation', identityVerified: true })).status, 409);
+  assert.equal(f.db.rows(C.sessions).length, 0);
 });
 
 test('approved access polls reuse a hashed 30-day device session; revocation denies dashboard and token handoff', async () => {

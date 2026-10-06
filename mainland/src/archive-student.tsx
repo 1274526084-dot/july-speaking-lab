@@ -35,6 +35,7 @@ import './archive-student.css';
 import './archive-entry.css';
 import {
   rememberCourseIdentity,
+  rememberCourseStudent,
   getCourseIdentity,
   getCourseStudent,
   COURSE_SESSION_KEY,
@@ -133,7 +134,7 @@ export function ArchiveStudent() {
   useEffect(() => {
     const syncIdentity = (event: StorageEvent) => {
       if (event.key !== COURSE_SESSION_KEY) return;
-      const next = getCourseIdentity()?.token || '';
+      const next = getArchiveToken();
       if (next === activeToken.current) return;
       activeToken.current = next;
       sessionStorage.removeItem('july.archive.student-session.v1');
@@ -224,6 +225,8 @@ export function ArchiveStudent() {
         const result = await archiveRequest<{
           status: string;
           studentToken?: string;
+          student?: { id: string; name: string; className: string };
+          expiresAt?: number;
         }>('accessStatus', { requestToken: pending.requestToken });
         if (!active) return;
         if (result.status === 'approved' && result.studentToken) {
@@ -232,6 +235,18 @@ export function ArchiveStudent() {
           setPending(null);
           setToken(result.studentToken);
           setNotice('老师已确认，欢迎进入自己的学习档案。');
+          const next = studentReturnUrl();
+          if (next && result.student && result.expiresAt) {
+            rememberCourseIdentity({
+              token: result.studentToken,
+              student: result.student,
+              expiresAt: Math.min(
+                result.expiresAt,
+                Date.now() + 2 * 60 * 60 * 1000,
+              ),
+            });
+            window.location.replace(next);
+          }
         } else if (
           result.status === 'rejected' ||
           result.status === 'expired' ||
@@ -255,10 +270,54 @@ export function ArchiveStudent() {
       }
     };
     void poll();
-    const timer = window.setInterval(() => void poll(), 10000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void poll();
+    }, 5000);
+    const visible = () => {
+      if (document.visibilityState === 'visible') void poll();
+    };
+    document.addEventListener('visibilitychange', visible);
     return () => {
       active = false;
       window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, [pending]);
+
+  useEffect(() => {
+    if (
+      !pending ||
+      (pending.practiceToken && Number(pending.practiceExpiresAt) > Date.now())
+    )
+      return;
+    let active = true;
+    void archiveRequest<{
+      practiceToken: string;
+      practiceExpiresAt: number;
+      student: { id: string; name: string; className: string };
+    }>('startPractice', { requestToken: pending.requestToken })
+      .then((result) => {
+        if (!active) return;
+        const next = { ...pending, ...result };
+        setPendingAccess(next);
+        setPending(next);
+        rememberCourseIdentity({
+          token: result.practiceToken,
+          verified: false,
+          student: result.student,
+          expiresAt: result.practiceExpiresAt,
+        });
+        const back = studentReturnUrl();
+        if (back) window.location.replace(back);
+      })
+      .catch((err) => {
+        if (active)
+          setError(
+            err instanceof Error ? err.message : '课堂身份暂未连接，请重试。',
+          );
+      });
+    return () => {
+      active = false;
     };
   }, [pending]);
 
@@ -268,9 +327,11 @@ export function ArchiveStudent() {
     setBusy(true);
     setError('');
     try {
+      rememberCourseStudent({ name: name.trim(), className: className.trim() });
       const result = await archiveRequest<AccessRequest>('requestAccess', {
         name: name.trim(),
         className: className.trim(),
+        practice: true,
       });
       const request = {
         ...result,
@@ -280,6 +341,16 @@ export function ArchiveStudent() {
       };
       setPendingAccess(request);
       setPending(request);
+      if (result.practiceToken && result.student && result.practiceExpiresAt) {
+        rememberCourseIdentity({
+          token: result.practiceToken,
+          student: result.student,
+          verified: false,
+          expiresAt: result.practiceExpiresAt,
+        });
+        const next = studentReturnUrl();
+        if (next) window.location.replace(next);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '申请失败，请重试。');
     } finally {
@@ -383,7 +454,7 @@ export function ArchiveStudent() {
           {notice}
         </output>
       )}
-      {!token && (
+      {!token && !pending?.practiceToken && (
         <div className="archive-welcome archive-rail-entry">
           <section className="archive-rail-story">
             <div className="archive-rail-heading">
@@ -436,21 +507,26 @@ export function ArchiveStudent() {
           <section className="archive-access archive-rail-ticket">
             {pending ? (
               <>
-                <span className="archive-step">候车中 · 设备确认</span>
-                <h2>请老师确认校验码</h2>
+                <span className="archive-step">申请已发送</span>
+                <h2>正在连接课堂任务</h2>
                 <p>
                   姓名：{pending.name}
                   <br />
                   班级：{pending.className}
                 </p>
-                <strong className="archive-verification">
-                  {pending.verificationCode}
-                </strong>
-                <p>老师在“设备确认”核对后，本页自动进入。</p>
+                <p>
+                  不用等待老师，连接后即可开始。老师课后确认身份，再关联个人档案。
+                </p>
+                <div className="archive-existing">
+                  <strong>等待时也能先练习</strong>
+                  <div>
+                    <a href={sitePath('words')}>开始单词跟读 →</a>
+                    <a href={sitePath('student')}>开始口语练习 →</a>
+                  </div>
+                </div>
                 <small>
                   本次申请有效期至{' '}
-                  {new Date(pending.expiresAt).toLocaleString('zh-CN')}
-                  。请勿将校验码发给同学。
+                  {new Date(pending.expiresAt).toLocaleString('zh-CN')}。
                 </small>
                 <button
                   className="archive-secondary"
@@ -515,7 +591,7 @@ export function ArchiveStudent() {
                     busy || !name.trim() || !className.trim() || !consent
                   }
                 >
-                  {busy ? '正在申请…' : '确认并申请'}
+                  {busy ? '正在发送…' : '进入课堂 / 我的档案'}
                   <ArrowRight size={18} />
                 </button>
                 <details className="archive-entry-help">
@@ -524,7 +600,7 @@ export function ArchiveStudent() {
                     首次登录 / 换设备说明
                   </summary>
                   <p>
-                    填写原姓名、班级，老师确认后即可查看本人档案，不用设置密码。手机丢失可请老师撤销旧设备。
+                    填姓名、选班级即可先做任务；教师课后确认后可查看历史档案，不用密码。手机丢失可请老师撤销旧设备。
                   </p>
                   <p>
                     勾选“记住我”仅适用于私人设备，有效期30天。公共电脑请勿勾选。记录仅供本人及授权教师查看。
@@ -551,6 +627,41 @@ export function ArchiveStudent() {
             </div>
           </section>
         </div>
+      )}
+      {!token && pending?.practiceToken && (
+        <section className="archive-content">
+          <div className="archive-hello">
+            <div>
+              <span className="archive-eyebrow">课堂练习 · 先做任务</span>
+              <h1>{pending.name}</h1>
+              <p>{pending.className} · 身份待教师课后确认</p>
+            </div>
+            <button
+              className="archive-secondary"
+              onClick={() => {
+                setPendingAccess(null);
+                setPending(null);
+                clearArchiveToken();
+                setError('');
+              }}
+            >
+              换一位学生
+            </button>
+          </div>
+          <p className="archive-small">
+            提交后，成绩由服务器保存。此处只显示本次课堂身份的成绩；历史档案需老师确认，不会覆盖原记录。
+          </p>
+          {pending.requestId && (
+            <details className="archive-small">
+              <summary>课后给老师核对本机申请</summary>
+              <p>
+                本机申请标记：{pending.requestId.slice(-8)}
+                。请本人向老师展示此页；老师只需核对标记后点击确认，无需输入验证码。
+              </p>
+            </details>
+          )}
+          <CourseBoard onOpen={openTask} />
+        </section>
       )}
       {token && !data && (
         <section className="archive-loading">
@@ -774,12 +885,14 @@ export function ArchiveStudent() {
       <footer className="archive-footer">
         Liuzhou Railway Vocational Technical College · 学英语，也连接铁路世界
       </footer>
-      {quiz && token && (
+      {quiz && (token || pending?.practiceToken) && (
         <QuizDialog
           task={quiz}
-          token={token}
+          token={token || pending!.practiceToken!}
           onClose={() => setQuiz(null)}
-          onSaved={() => void load()}
+          onSaved={() => {
+            if (token) void load();
+          }}
         />
       )}
       {reflection && token && (

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { type SyntheticEvent, useEffect, useRef, useState } from 'react';
 import { getCourseStudent, rememberCourseStudent } from './course-session';
+import { ensureCoursePractice } from './classroom-identity';
 import { StudentClassField } from '@/components/student-class-field';
 import {
   prepareAudioForUpload,
@@ -282,6 +283,7 @@ export function WordStudent() {
     setLoading(true);
     setError('');
     try {
+      const identity = await ensureCoursePractice({ name, className });
       const payload = await wordRequest<{
         attemptId: string;
         submitToken: string;
@@ -290,6 +292,7 @@ export function WordStudent() {
         studentName: name,
         className,
         recordingConsent: consent,
+        studentToken: identity.token,
       });
       window.localStorage.setItem('word-lab.student-name', name.trim());
       window.localStorage.setItem('word-lab.student-class', className.trim());

@@ -27,7 +27,7 @@ function lessonProgress({ speaking = [], words = [], wordUnits = [], unit2 = [],
     if (!groups.has(key)) groups.set(key, { key, title, rows: [] });
     groups.get(key).rows.push({ score: Number(score), when: Number(when || 0) });
   }
-  for (const row of speaking) add({ unit: 1, lesson: 1 }, `speaking:${row.scene_id}`, row.scene_title || '校园口语', row.total_score, row.submitted_at);
+  for (const row of speaking) add({ unit: 1, lesson: 1 }, `speaking:${row.scene_id}:${row.scoring_version || 'legacy'}`, row.scene_title || '校园口语', row.total_score, row.submitted_at);
   for (const row of unit2) add({ unit: 1, lesson: 2 }, `activity:${row.activity}:${row.details?.major || ''}`, row.title || row.activity, row.score, row.created_at);
   for (const row of quizzes) {
     const task = tasks.find(item => item.id === row.task_id);

@@ -1,0 +1,139 @@
+.classroom-access {
+  margin: 20px 0;
+  border: 1px solid #cadbce;
+  border-radius: 20px;
+  padding: 18px;
+  background: #fff;
+  color: #244337;
+}
+.classroom-access header,
+.classroom-access header > div,
+.classroom-access article,
+.classroom-access article > div:last-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.classroom-access header > div:first-child {
+  justify-content: flex-start;
+}
+.classroom-access button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  border: 1px solid #d6dfd7;
+  border-radius: 10px;
+  background: white;
+  padding: 8px 12px;
+  font-size: 14px;
+  color: inherit;
+}
+.classroom-access button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.classroom-access header span {
+  font-size: 13px;
+  border-radius: 20px;
+  background: #edf4ef;
+  padding: 4px 9px;
+}
+.classroom-access header .has-pending {
+  background: #fff0d8;
+  color: #835016;
+  font-weight: 700;
+}
+.classroom-access-hint,
+.classroom-access-empty {
+  font-size: 13px;
+  color: #65776d;
+  margin: 10px 0 0;
+}
+.classroom-access-filters {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+.classroom-access-filters input {
+  border: 1px solid #d6dfd7;
+  border-radius: 10px;
+  padding: 10px;
+  max-width: 100%;
+  font-size: 14px;
+}
+.classroom-access article {
+  padding: 14px 0;
+  border-top: 1px solid #e8ede9;
+}
+.classroom-access article > div:first-child {
+  display: grid;
+  gap: 5px;
+}
+.classroom-access article span {
+  font-size: 13px;
+  color: #65776d;
+}
+.classroom-access .classroom-approve {
+  background: #306847;
+  color: white;
+  border-color: #306847;
+  font-weight: 700;
+}
+.classroom-access-error {
+  color: #9c302a;
+  background: #fff0ee;
+  padding: 10px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+.classroom-access-success {
+  display: block;
+  margin-top: 10px;
+  color: #275e3b;
+  background: #edf7ee;
+  padding: 10px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+.classroom-access label,
+.classroom-batch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.classroom-batch {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  margin: 14px 0;
+  font-size: 13px;
+}
+.classroom-access input[type='checkbox'] {
+  width: 17px;
+  height: 17px;
+  accent-color: #306847;
+}
+.classroom-access details {
+  font-size: 13px;
+}
+.classroom-access details p {
+  margin: 5px 0;
+}
+@media (max-width: 540px) {
+  .classroom-access {
+    padding: 14px;
+  }
+  .classroom-access header > div:first-child {
+    width: 100%;
+  }
+  .classroom-access-filters {
+    display: grid;
+  }
+  .classroom-access-filters input {
+    width: 100%;
+  }
+}

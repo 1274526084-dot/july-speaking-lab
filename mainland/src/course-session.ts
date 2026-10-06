@@ -7,11 +7,15 @@ type CourseStudent = {
   studentNumber?: string;
 };
 function normalizedStudent<T extends CourseStudent>(student: T): T {
-  const view = projectSchoolRecord({ student_name: student.name, class_name: student.className });
+  const view = projectSchoolRecord({
+    student_name: student.name,
+    class_name: student.className,
+  });
   return { ...student, name: view.student_name, className: view.class_name };
 }
 export type CourseIdentity = {
   token: string;
+  verified?: boolean;
   student: {
     id: string;
     name: string;

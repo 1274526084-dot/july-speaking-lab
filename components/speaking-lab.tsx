@@ -18,6 +18,7 @@ import {
 import { getAdaptiveReply } from '@/lib/adaptive-reply';
 import { scenes, type PracticeTurn, type SceneId } from '@/lib/scenes';
 import { StudentClassField } from '@/components/student-class-field';
+import { ensureCoursePractice } from '@/mainland/src/classroom-identity';
 import {
   getCourseStudent,
   rememberCourseStudent,
@@ -46,6 +47,7 @@ type RoundScore = {
   sentence: number;
   clarity: number;
   note: string;
+  unrecognized?: boolean;
 };
 type Submission = { ok: boolean; id?: string; error?: string };
 type RecognitionAlternative = { transcript: string; confidence?: number };
@@ -128,9 +130,10 @@ function evaluateTurn(
 
 function evaluateUnrecognizedTurn(): RoundScore {
   return {
-    task: 20,
-    sentence: 15,
+    task: 0,
+    sentence: 0,
     clarity: 8,
+    unrecognized: true,
     note: '手机没有返回识别文字，但本轮录音已保存，老师可以回听。',
   };
 }
@@ -366,7 +369,9 @@ export function SpeakingLab({
       scores.length === scene.turns.length
         ? 10
         : Math.round((scores.length / scene.turns.length) * 10);
-    const total = task + sentence + clarity + interaction;
+    const total = scores.some((item) => item.unrecognized)
+      ? null
+      : Math.round(((task + sentence + interaction) / 80) * 100);
     const advice: string[] = [];
     if (task < 30)
       advice.push('下一次先确认自己是否回答了每轮要求的关键信息。');
@@ -835,6 +840,11 @@ export function SpeakingLab({
     try {
       let submitted: Submission;
       if (apiMode === 'cloudbase') {
+        const identity = await ensureCoursePractice({
+          name: profile.name,
+          className: profile.className,
+          studentNumber: profile.studentId,
+        });
         const ordered = [...recordings].sort((a, b) => a.round - b.round);
         const prepared = await postCloudJson<{
           uploadId: string;
@@ -842,7 +852,7 @@ export function SpeakingLab({
           uploads: CloudUploadTicket[];
         }>(apiUrl, {
           action: 'prepareUpload',
-          payload: attemptPayload,
+          payload: { ...attemptPayload, studentToken: identity.token },
           audio: ordered.map((clip) => ({
             round: clip.round,
             type: clip.blob.type || 'audio/wav',
@@ -1355,14 +1365,15 @@ export function SpeakingLab({
                 Step 4 · Result
               </p>
               <h1 className="serif mt-1 text-3xl font-bold text-[#d94f08]">
-                本次得分 {result.total} / 100
+                {result.total == null
+                  ? '录音已保留 · 待教师回听'
+                  : `练习参考分 ${result.total} / 100`}
               </h1>
             </div>
             <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
                 [result.task, 40, '任务信息'],
                 [result.sentence, 30, '句型使用'],
-                [result.clarity, 20, '识别清晰度'],
                 [result.interaction, 10, '完成话轮'],
               ].map(([score, full, label]) => (
                 <div
@@ -1383,7 +1394,7 @@ export function SpeakingLab({
               <p className="font-bold text-[#23748d]">给你的建议</p>
               <p className="mt-2 leading-7 text-[#40545a]">{result.advice}</p>
               <p className="mt-2 text-xs leading-5 text-[#6f7b7d]">
-                评分只检查是否完成任务、是否使用目标句型、浏览器识别稳定度和话轮完成情况，不冒充专业发音或语法评分。
+                按任务信息40分、句型30分、话轮10分统一折算为百分制参考分；识别稳定度不计分。未识别时不判零分。归档分由云端重新计算，教师可回听复核，不作为专业发音或英语水平测评。
               </p>
             </div>
             <div className="mt-5 grid gap-3 sm:grid-cols-3">

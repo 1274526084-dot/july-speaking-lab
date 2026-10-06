@@ -13,6 +13,7 @@ import {
   type ArchiveTask as EditableTask,
 } from './archive-teacher';
 import { CLASS_CATALOG } from '@/lib/class-catalog';
+import { ClassroomAccess } from './classroom-access';
 import {
   clearTeacherToken,
   cloudbaseRequest,
@@ -228,6 +229,7 @@ export function TeacherWorkbench() {
             退出
           </button>
         </header>
+        <ClassroomAccess />
         <nav
           aria-label="教师快捷入口"
           className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"

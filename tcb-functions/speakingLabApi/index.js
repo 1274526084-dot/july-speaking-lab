@@ -568,6 +568,7 @@ function sanitizeAttemptPayload(payload) {
     interaction_score: cleanInt(payload.interactionScore, 0, 10),
     total_score: cleanInt(payload.totalScore, 0, 100),
     feedback,
+    ...require('./scoring').gradeSpeaking(sceneId, transcript),
   };
 }
 
@@ -584,6 +585,7 @@ async function handlePrepareUpload(event, body) {
   const attempt = sanitizeAttemptPayload(payload);
   const clips = Array.isArray(body.audio) ? body.audio.slice(0, 4) : [];
   if (!attempt) return response(event, 400, { ok: false, error: '请填写姓名、学号和班级，并完成三轮对话。' });
+  Object.assign(attempt, await require('./archive-binding').bindArchiveIdentity(db, payload.studentToken, { name: attempt.student_name, className: attempt.class_name }));
   if (payload.recordingConsent !== true || clips.length < 1 || clips.length > 3) {
     return response(event, 400, { ok: false, error: '正式提交需要同意上传一至三段练习录音。' });
   }
@@ -671,6 +673,7 @@ async function handleSubmit(event, body) {
       error: '提交次数过多，请稍后再试。',
     });
   const payload = body.payload || {};
+  const binding = await require('./archive-binding').bindArchiveIdentity(db, payload.studentToken, { name: payload.studentName, className: payload.className });
   const studentName = cleanText(payload.studentName, 40);
   const studentId = cleanText(payload.studentId, 40);
   const className = cleanText(payload.className, 60);
@@ -758,6 +761,7 @@ async function handleSubmit(event, body) {
     }
 
     const attempt = {
+      ...binding,
       id,
       project_id: PROJECT_ID,
       data_region: DATA_REGION,
@@ -783,6 +787,7 @@ async function handleSubmit(event, body) {
       interaction_score: cleanInt(payload.interactionScore, 0, 10),
       total_score: cleanInt(payload.totalScore, 0, 100),
       feedback,
+      ...require('./scoring').gradeSpeaking(sceneId, transcript),
       audio_manifest: JSON.stringify(manifest),
       submitted_at: submittedAt,
     };
@@ -864,9 +869,9 @@ exports.main = async (event) => {
     const action = cleanText(body.action, 40);
     if (action === 'recognizeChunk') return handleRecognizeChunk(event, body);
     if (action === 'recognize') return handleRecognize(event, body);
-    if (action === 'prepareUpload') return handlePrepareUpload(event, body);
+    if (action === 'prepareUpload') return await handlePrepareUpload(event, body);
     if (action === 'confirmUpload') return handleConfirmUpload(event, body);
-    if (action === 'submit') return handleSubmit(event, body);
+    if (action === 'submit') return await handleSubmit(event, body);
     if (action === 'teacherLogin') return handleLogin(event, body);
     if (action === 'session') {
       const session = await validSession(body.token);
@@ -891,6 +896,7 @@ exports.main = async (event) => {
     }
     return response(event, 404, { ok: false, error: '未知操作。' });
   } catch (error) {
+    if (error?.status === 401) return response(event, 401, { ok: false, error: error.message });
     console.error('speakingLab API failed', error?.message || error);
     return response(event, 500, {
       ok: false,

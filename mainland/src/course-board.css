@@ -1,3 +1,27 @@
+.course-record-link {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #306847;
+  text-decoration: underline;
+}
+.course-item-scores {
+  min-width: 175px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.course-item-scores summary {
+  cursor: pointer;
+  color: #306847;
+}
+.course-item-scores div {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+}
+.course-item-scores span {
+  color: #65776d;
+}
 .course-board {
   font-family: system-ui, 'Microsoft YaHei', sans-serif;
   color: #293d33;

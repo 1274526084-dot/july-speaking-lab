@@ -16,6 +16,8 @@ const COLLECTIONS = Object.freeze({
   unit2: 'english_archive_unit2_attempts',
   classNormalization: 'english_archive_class_normalization',
   courseUnits: 'english_archive_course_units',
+  practiceSessions: 'english_archive_practice_sessions',
+  practiceAttempts: 'english_archive_practice_attempts',
 });
 const LEGACY = Object.freeze({ profiles: 'english_learning_profiles', words: 'word_attempts', speaking: 'speaking_attempts' });
 const DAY = 24 * 60 * 60 * 1000;
@@ -116,7 +118,7 @@ function publicStudent(student) {
   return { id: student.id, name: view.student_name, className: view.class_name, college: view.normalized_college, rawName: view.raw_student_name, rawClassName: view.raw_class_name };
 }
 function publicRequest(row, now) {
-  return { id: row.id, name: row.name, className: row.class_name, status: row.status === 'pending' && row.expires_at <= now ? 'expired' : row.status, createdAt: row.created_at, expiresAt: row.expires_at, approvedAt: row.approved_at || null, approvedBy: row.approved_by || null, studentId: row.student_id || null };
+  return { id: row.id, name: row.name, className: row.class_name, status: row.status === 'pending' && row.expires_at <= now ? 'expired' : row.status, createdAt: row.created_at, expiresAt: row.expires_at, approvedAt: row.approved_at || null, approvedBy: row.approved_by || null, studentId: row.student_id || null, practiceCount: row.practice_count || 0, practiceScores: Object.values(row.practice_scores || {}) };
 }
 
 function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = console }) {
@@ -218,23 +220,100 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     if (!session || session.auth_version !== 2 || !Number.isFinite(Number(session.expires_at)) || Number(session.expires_at) <= now() || !TEACHERS.has(session.teacher_code) || session.active === false || session.revoked_at || (session.project_id && !tagged(session))) fail(401, '教师登录已失效，请重新登录。');
     return { code: session.teacher_code, name: text(session.teacher_name, 60) || session.teacher_code };
   }
-  async function studentSession(token) {
+  async function studentSession(token, allowPractice = false) {
     if (!validToken(token)) fail(401, '此设备尚未获老师批准，或授权已失效。');
-    const session = await get(COLLECTIONS.sessions, hash(token));
+    let session = await get(COLLECTIONS.sessions, hash(token));
+    if (!session) {
+      const practice = await get(COLLECTIONS.practiceSessions, hash(token));
+      if (!tagged(practice) || practice.auth_version !== 1 || practice.revoked_at || practice.expires_at <= now()) fail(401, '课堂身份已到期，请重新填写姓名和班级；已提交记录仍保留。');
+      const request = await get(COLLECTIONS.requests, practice.request_id);
+      if (!tagged(request) || !['pending', 'approved'].includes(request.status)) fail(401, '本次申请已失效，请联系老师；已提交记录仍保留。');
+      if (request.status === 'approved') {
+        const granted = await get(COLLECTIONS.sessions, request.session_id);
+        if (!tagged(granted) || granted.revoked_at || granted.expires_at <= now()) fail(401, '此设备授权已撤销或到期，已提交记录仍保留。');
+      }
+      if (allowPractice) {
+        const group = createClassDirectory([], CLASS_CATALOG.map(class_name => ({ class_name }))).resolve({ class_name: request.class_name });
+        return { session: practice, student: { id: `practice-${practice.id.slice(0, 48)}`, name: request.name, class_name: request.class_name, class_key: group.key, project_id: PROJECT_ID }, practice: true, request };
+      }
+      if (request.status !== 'approved') fail(401, '可先完成课堂任务；个人历史档案需老师课后确认。');
+      session = await get(COLLECTIONS.sessions, request.session_id);
+    }
     if (!tagged(session) || session.auth_version !== 1 || session.revoked_at || !Number.isFinite(Number(session.expires_at)) || session.expires_at <= now()) fail(401, '此设备尚未获老师批准，或授权已失效。');
     const student = await get(COLLECTIONS.students, session.student_id);
     if (!tagged(student) || student.active === false) fail(401, '学习档案授权已失效，请联系老师。');
     return { session, student };
   }
+  async function startPractice(requestToken) {
+    if (!validToken(requestToken)) fail(401, '申请凭证已失效，请重新填写姓名和班级。');
+    const requestId = `access-${hash(requestToken).slice(0, 48)}`;
+    const practiceToken = hash(`english-archive-practice|${requestToken}`);
+    const expiresAt = now() + 2 * 60 * 60 * 1000;
+    const request = await db.runTransaction(async tx => {
+      const row = await get(COLLECTIONS.requests, requestId, tx);
+      if (!tagged(row) || !equalHash(row.request_token_hash, hash(requestToken)) || row.status !== 'pending' || row.expires_at <= now()) fail(409, '本次申请已处理或过期，请重新进入。');
+      const old = await get(COLLECTIONS.practiceSessions, hash(practiceToken), tx);
+      if (old?.revoked_at) fail(401, '课堂身份已撤销，请重新申请。');
+      await put(COLLECTIONS.practiceSessions, hash(practiceToken), { id: hash(practiceToken), project_id: PROJECT_ID, auth_version: 1, request_id: requestId, created_at: old?.created_at || now(), expires_at: expiresAt, revoked_at: null }, tx);
+      await put(COLLECTIONS.requests, requestId, { ...row, practice_enabled: true, expires_at: Math.max(row.expires_at, now() + 7 * DAY) }, tx);
+      return row;
+    });
+    const group = createClassDirectory([], CLASS_CATALOG.map(class_name => ({ class_name }))).resolve({ class_name: request.class_name });
+    return { practiceToken, practiceExpiresAt: expiresAt, student: { id: `practice-${hash(practiceToken).slice(0, 48)}`, name: request.name, className: group.label }, verified: false };
+  }
+  async function recordPractice(row, auth, tx, kind) {
+    const session = await get(COLLECTIONS.practiceSessions, auth.session.id, tx);
+    const request = await get(COLLECTIONS.requests, auth.request.id, tx);
+    if (!tagged(session) || session.revoked_at || session.expires_at <= now() || !tagged(request) || !['pending', 'approved'].includes(request.status)) fail(401, '课堂身份已到期或撤销，本次尚未提交，请重新进入。');
+    const key = kind === 'quiz' ? `quiz:${row.task_id}:${row.task_version}` : `unit2:${row.activity}:${row.details?.major || ''}`;
+    await put(COLLECTIONS.practiceAttempts, row.id, { ...row, attempt_kind: kind, access_request_id: request.id }, tx);
+    await put(COLLECTIONS.requests, request.id, { ...request, practice_count: (request.practice_count || 0) + 1, practice_scores: { ...request.practice_scores, [key]: { title: row.task_title || row.title, score: row.score, submittedAt: row.created_at } } }, tx);
+  }
+  async function existingAttempt(kind, id, legacyId, auth, tx) {
+    const collection = kind === 'unit2' ? COLLECTIONS.unit2 : COLLECTIONS.submissions;
+    const previous = await get(collection, id, tx) || await get(COLLECTIONS.practiceAttempts, id, tx) || (!auth.practice && await get(collection, legacyId, tx));
+    if (!previous) return null;
+    if (!tagged(previous)) fail(409, '提交编号已使用，不能修改他人的成绩。');
+    if (previous.access_request_id) {
+      if (auth.practice) {
+        if (previous.access_request_id !== auth.request.id || previous.student_id !== auth.student.id) fail(409, '此提交编号属于另一份申请，不能修改他人的成绩。');
+      } else {
+        const owner = await get(COLLECTIONS.requests, previous.access_request_id, tx);
+        if (!tagged(owner) || owner.status !== 'approved' || owner.student_id !== auth.student.id) fail(409, '此提交编号不属于本人，不能修改他人的成绩。');
+      }
+    } else if (previous.student_id !== auth.student.id) fail(409, '此提交编号不属于本人，不能修改他人的成绩。');
+    return previous;
+  }
   async function datasets() {
     const startedAt = Date.now();
-    const names = ['profiles', 'words', 'speaking', 'students', 'reflections', 'submissions', 'tasks', 'news', 'unit2'];
-    const [result, wordUnits] = await Promise.all([
+    const names = ['profiles', 'words', 'speaking', 'students', 'reflections', 'submissions', 'tasks', 'news', 'unit2', 'practiceAttempts'];
+    const [result, wordUnits, approvedRequests] = await Promise.all([
       Promise.all(names.map(key => read(LEGACY[key] || COLLECTIONS[key], LEGACY[key] ? {} : { project_id: PROJECT_ID }, Boolean(LEGACY[key])))),
       read('word_units', {}, true),
+      read(COLLECTIONS.requests, { project_id: PROJECT_ID, status: 'approved' }),
     ]);
     const data = { hasMore: result.some(item => item.hasMore), incompleteCollections: names.filter((_, i) => result[i].hasMore), scans: Object.fromEntries(names.map((key, index) => [key, { scanned: result[index].rows.length, total: result[index].totalCount, pages: result[index].pages, elapsedMs: result[index].elapsedMs }])) };
     names.forEach((key, index) => { data[key] = LEGACY[key] ? result[index].rows.filter(row => scoped(row, key) && (key !== 'words' || row.status === 'completed')).map(projectSchoolRecord) : result[index].rows.filter(tagged); });
+    const approved = new Map(approvedRequests.rows.filter(tagged).map(row => [row.id, row.student_id]));
+    const owners = new Set(data.students.map(student => student.id));
+    // Never merge new unverified submissions by a public name/class label.
+    // Preserve old rows unchanged, while new evidence needs explicit ownership.
+    for (const kind of ['profiles', 'words', 'speaking']) {
+      data[kind] = data[kind].flatMap(row => {
+        if (!row.archive_binding_version) return [row];
+        const owner = row.archive_binding === 'verified' ? row.archive_student_id : row.archive_binding === 'pending' ? approved.get(row.archive_request_id) : '';
+        return owner && owners.has(owner) ? [{ ...row, archive_student_id: owner }] : [];
+      });
+    }
+    for (const row of data.practiceAttempts) {
+      const studentId = approved.get(row.access_request_id);
+      if (studentId) {
+        const view = { ...row, student_id: studentId, identity_approval: 'teacher-confirmed' };
+        if (row.attempt_kind === 'unit2') data.unit2.push(view);
+        if (row.attempt_kind === 'quiz') data.submissions.push(view);
+      }
+    }
+    if (approvedRequests.hasMore) { data.hasMore = true; data.incompleteCollections.push('approvedRequests'); }
     // Read only the same domestic units accepted by wordLab. No unit or audio is rewritten.
     data.wordUnits = wordUnits.rows.filter(row => !foreign(row) && (tagged(row) || (!row.project_id && row.teacher_id && row.share_code && typeof row.words_json === 'string')));
     if (wordUnits.hasMore) { data.hasMore = true; data.incompleteCollections.push('wordUnits'); }
@@ -263,7 +342,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
           data.identities.set(key, bucket);
         }
         bucket[kind].push(row);
-        if (kind === 'speaking') {
+        if (kind === 'speaking' && !row.archive_binding_version) {
           const studentNumber = normalizeName(row.student_id);
           if (studentNumber) bucket.studentNumbers.add(studentNumber);
         }
@@ -302,7 +381,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     return data.identities.get(`${student.class_key}\0${normalizeName(view.name)}`) || data.identities.get(`${group.identityKey}\0${normalizeName(view.name)}`);
   }
   function legacyRows(kind, student, data) {
-    return identityFor(student, data)?.[kind] || [];
+    return (identityFor(student, data)?.[kind] || []).filter(row => !row.archive_binding_version || row.archive_student_id === student.id);
   }
   function archiveRows(kind, student, data) {
     return data[`${kind}ByStudent`].get(student.id) || [];
@@ -321,7 +400,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     });
   }
   function profileFor(student, data) {
-    return identityFor(student, data)?.profile || null;
+    return legacyRows('profiles', student, data).sort((a,b) => Number(tagged(b)) - Number(tagged(a)) || timestamp(b) - timestamp(a))[0] || null;
   }
   async function signedAudio(entries) {
     const unique = [...new Set(entries.flatMap(entry => entry.audio.map(clip => clip.fileId)).filter(id => typeof id === 'string' && id.startsWith('cloud://')))];
@@ -454,7 +533,12 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       const id = `access-${hash(requestToken).slice(0, 48)}`;
       const row = { id, project_id: PROJECT_ID, name, class_name: className, raw_student_name: originalName, raw_class_name: originalClass, request_token_hash: hash(requestToken), verification_hash: hash(`${id}|${verificationCode}`), session_id: hash(studentToken), status: 'pending', created_at: now(), expires_at: now() + DAY };
       await put(COLLECTIONS.requests, id, row);
-      return { requestId: id, requestToken, verificationCode, expiresAt: row.expires_at, status: 'pending' };
+      const practice = body.practice === true ? await startPractice(requestToken) : {};
+      return { requestId: id, requestToken, verificationCode, expiresAt: body.practice === true ? now() + 7 * DAY : row.expires_at, status: 'pending', ...practice };
+    }
+    if (action === 'startPractice') {
+      await rate(event, 'start-practice', 30, 15 * 60 * 1000, hash(body.requestToken || ''));
+      return startPractice(body.requestToken);
     }
     if (action === 'accessStatus') {
       if (!validToken(body.requestToken)) fail(401, '授权申请已失效，请重新申请。');
@@ -472,14 +556,25 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       } catch (error) { if (error.status === 401) return { status: 'revoked' }; throw error; }
     }
     if (['studentDashboard', 'saveReflection', 'submitQuiz', 'studentLogout', 'saveUnit2Attempt', 'unit2Dashboard', 'courseSession', 'courseStudentScores'].includes(action)) {
-      const auth = await studentSession(body.studentToken);
+      const auth = await studentSession(body.studentToken, ['courseSession', 'saveUnit2Attempt', 'submitQuiz', 'courseStudentScores', 'unit2Dashboard'].includes(action));
       const { student, session } = auth;
       await rate(event, action, action === 'studentDashboard' ? 90 : 30, 15 * 60 * 1000, student.id);
       if (action === 'studentLogout') {
         await put(COLLECTIONS.sessions, session.id, { ...session, revoked_at: now(), revoked_by: 'student' });
         return {};
       }
-      if (action === 'courseSession') return { student: publicStudent(student), expiresAt: Math.min(session.expires_at, now() + 2 * 60 * 60 * 1000) };
+      if (action === 'courseSession') return { student: publicStudent(student), verified: !auth.practice, expiresAt: Math.min(session.expires_at, now() + 2 * 60 * 60 * 1000) };
+      if (auth.practice && ['courseStudentScores', 'unit2Dashboard'].includes(action)) {
+        const [own, words, speaking, units, tasks] = await Promise.all([
+          read(COLLECTIONS.practiceAttempts, { project_id: PROJECT_ID, student_id: student.id, access_request_id: auth.request.id }),
+          read(LEGACY.words, { project_id: PROJECT_ID, archive_request_id: auth.request.id, archive_binding: 'pending', status: 'completed' }, true),
+          read(LEGACY.speaking, { project_id: PROJECT_ID, archive_request_id: auth.request.id, archive_binding: 'pending' }, true),
+          read('word_units', { project_id: PROJECT_ID }, true),
+          read(COLLECTIONS.tasks, { project_id: PROJECT_ID, status: 'published' }),
+        ]);
+        if ([own, words, speaking, units, tasks].some(scan => scan.hasMore)) fail(409, '本次成绩未完整载入，请稍后重试。');
+        return { student: publicStudent(student), verified: false, unit2: unit2Summary(own.rows.filter(row => row.attempt_kind === 'unit2')), courseProgress: lessonProgress({ unit2: own.rows.filter(row => row.attempt_kind === 'unit2'), quizzes: own.rows.filter(row => row.attempt_kind === 'quiz'), words: words.rows.filter(tagged), speaking: speaking.rows.filter(tagged), wordUnits: units.rows.filter(tagged), tasks: tasks.rows.filter(tagged) }) };
+      }
       if (action === 'courseStudentScores') {
         const data = await datasets();
         if (data.hasMore || identityConflict(student, data)) fail(409, '记录或身份待核对，暂不显示可能不完整的成绩。');
@@ -490,27 +585,30 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
         if (!/^[a-zA-Z0-9_-]{8,100}$/.test(requestId)) fail(400, '提交编号不正确。');
         let graded;
         try { graded = gradeUnit2(body); } catch (error) { fail(400, error.message); }
-        const id = `unit2-${hash(`${PROJECT_ID}|${student.id}|${requestId}`).slice(0, 48)}`;
+        const id = `unit2-${hash(`${PROJECT_ID}|${requestId}`).slice(0, 48)}`;
+        const legacyId = `unit2-${hash(`${PROJECT_ID}|${student.id}|${requestId}`).slice(0, 48)}`;
         const fingerprint = hash(JSON.stringify(graded));
         const row = await db.runTransaction(async tx => {
-          const previous = await get(COLLECTIONS.unit2, id, tx);
+          const previous = await existingAttempt('unit2', id, legacyId, auth, tx);
           if (previous) {
-            if (!tagged(previous) || previous.student_id !== student.id || previous.fingerprint !== fingerprint) fail(409, '提交编号已被其他答案使用，请重新提交。');
+            if (previous.fingerprint !== fingerprint) fail(409, '提交编号已被其他答案使用，请重新提交。');
             return previous;
           }
           const result = { ...graded, id, fingerprint, project_id: PROJECT_ID, student_id: student.id, unit: 'Unit 2', created_at: now() };
-          await put(COLLECTIONS.unit2, id, result, tx);
+          if (auth.practice) await recordPractice(result, auth, tx, 'unit2');
+          else await put(COLLECTIONS.unit2, id, result, tx);
           return result;
         });
-        return { submission: { id: row.id, activity: row.activity, score: row.score, total: row.total, correct: row.correct, submittedAt: row.created_at } };
+        return { pendingVerification: Boolean(auth.practice), submission: { id: row.id, activity: row.activity, score: row.score, total: row.total, correct: row.correct, submittedAt: row.created_at } };
       }
       if (action === 'unit2Dashboard') {
-        const records = await read(COLLECTIONS.unit2, { project_id: PROJECT_ID, student_id: student.id });
-        return { student: publicStudent(student), unit2: unit2Summary(records.rows), hasMore: records.hasMore };
+        const data = await datasets();
+        if (data.hasMore || identityConflict(student, data)) fail(409, '记录或身份待核对，暂不能安全显示成绩。');
+        return { student: publicStudent(student), unit2: unit2Summary(archiveRows('unit2', student, data)), hasMore: false };
       }
-      const data = await datasets();
-      if (data.incompleteCollections.some(key => LEGACY[key] || key === 'students')) fail(409, '身份核验所需的历史记录超过本次读取上限，暂不能安全读取或新增个人档案。请联系老师分批核对；原始记录仍保留。');
-      if (identityConflict(student, data)) fail(409, '同班同名记录出现不同学号，暂不能安全显示或新增个人档案。请联系老师核对；原始记录仍保留。');
+      const data = auth.practice ? { directory: createClassDirectory([], CLASS_CATALOG.map(class_name => ({ class_name }))), incompleteCollections: [] } : await datasets();
+      if (!auth.practice && data.incompleteCollections.some(key => LEGACY[key] || key === 'students')) fail(409, '身份核验所需的历史记录超过本次读取上限，暂不能安全读取或新增个人档案。请联系老师分批核对；原始记录仍保留。');
+      if (!auth.practice && identityConflict(student, data)) fail(409, '同班同名记录出现不同学号，暂不能安全显示或新增个人档案。请联系老师核对；原始记录仍保留。');
       if (action === 'saveReflection') {
         const skills = skillsValue(body.skills), goals = requiredText(body.goals, '学习目标', 2000);
         const id = `reflection-${randomUUID()}`, createdAt = now();
@@ -521,13 +619,14 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       const taskId = requiredText(body.taskId, '测验编号', 100);
       const requestId = requiredText(body.requestId, '提交凭证', 100);
       if (!/^[a-zA-Z0-9_-]{8,100}$/.test(requestId)) fail(400, '提交凭证不正确，请刷新后再试。');
-      const id = `quiz-${hash(`${PROJECT_ID}|${student.id}|${requestId}`).slice(0, 48)}`;
+      const id = `quiz-${hash(`${PROJECT_ID}|${requestId}`).slice(0, 48)}`;
+      const legacyId = `quiz-${hash(`${PROJECT_ID}|${student.id}|${requestId}`).slice(0, 48)}`;
       const answers = body.answers;
       if (!Array.isArray(answers) || answers.length > 30 || answers.some(value => !Number.isInteger(value) || value < 0 || value > 3)) fail(400, '请完成所有题目。');
       const submitted = await db.runTransaction(async tx => {
-        const previous = await get(COLLECTIONS.submissions, id, tx);
+        const previous = await existingAttempt('quiz', id, legacyId, auth, tx);
         if (previous) {
-          if (!tagged(previous) || previous.student_id !== student.id || previous.task_id !== taskId || JSON.stringify(previous.answers) !== JSON.stringify(answers)) fail(409, '此提交凭证已用于其他答案，请重新提交。');
+          if (previous.task_id !== taskId || JSON.stringify(previous.answers) !== JSON.stringify(answers)) fail(409, '此提交凭证已用于其他答案，请重新提交。');
           return previous;
         }
         const task = await get(COLLECTIONS.tasks, taskId, tx);
@@ -537,15 +636,16 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
         const feedback = task.questions.map((question, index) => ({ id: question.id, prompt: question.prompt, options: question.options, selected: answers[index], answer: question.answer, correct: answers[index] === question.answer, explanation: question.explanation || '' }));
         const correct = feedback.filter(item => item.correct).length;
         const row = { id, project_id: PROJECT_ID, student_id: student.id, task_id: taskId, task_title: task.title, unit: task.unit, lesson: task.lesson, task_updated_at: task.updated_at, task_version: task.version ?? task.updated_at, request_id: requestId, answers, feedback, total: feedback.length, correct, score: Math.round(correct / feedback.length * 100), created_at: now() };
-        await put(COLLECTIONS.submissions, id, row, tx);
+        if (auth.practice) await recordPractice(row, auth, tx, 'quiz');
+        else await put(COLLECTIONS.submissions, id, row, tx);
         return row;
       });
-      return { submission: { id: submitted.id, taskId: submitted.task_id, taskVersion: submitted.task_version ?? submitted.task_updated_at, score: submitted.score, correct: submitted.correct, total: submitted.total, submittedAt: submitted.created_at, feedback: submitted.feedback }, score: submitted.score, feedback: submitted.feedback };
+      return { pendingVerification: Boolean(auth.practice), submission: { id: submitted.id, taskId: submitted.task_id, taskVersion: submitted.task_version ?? submitted.task_updated_at, score: submitted.score, correct: submitted.correct, total: submitted.total, submittedAt: submitted.created_at, feedback: submitted.feedback }, score: submitted.score, feedback: submitted.feedback };
     }
     const teacherActions = ['teacherDashboard', 'teacherStudent', 'listAccessRequests', 'approveAccess', 'rejectAccess', 'revokeDevice', 'saveTask', 'saveNews', 'teacherSession', 'normalizeClasses', 'courseFeed', 'saveCourseUnit', 'setCurrentLesson', 'teacherCourseScores'];
     if (!teacherActions.includes(action)) fail(404, '未知操作。');
     const staff = await teacher(body.token);
-    await rate(event, action, action === 'approveAccess' ? 100 : 180, 15 * 60 * 1000, staff.code);
+    await rate(event, action, action === 'listAccessRequests' ? 1000 : action === 'approveAccess' ? 100 : 180, 15 * 60 * 1000, staff.code);
     if (action === 'teacherSession') return { code: staff.code, name: staff.name };
     if (action === 'courseFeed') {
       const [courses, tasks] = await Promise.all([read(COLLECTIONS.courseUnits, { project_id: PROJECT_ID }), read(COLLECTIONS.tasks, { project_id: PROJECT_ID })]);
@@ -598,8 +698,16 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     if (action === 'saveTask') return saveOwned('tasks', body, staff);
     if (action === 'saveNews') return saveOwned('news', body, staff);
     if (action === 'listAccessRequests') {
-      const requests = await read(COLLECTIONS.requests, { project_id: PROJECT_ID });
-      return { requests: requests.rows.map(row => publicRequest(row, now())).sort((a, b) => b.createdAt - a.createdAt), hasMore: requests.hasMore };
+      const requests = await read(COLLECTIONS.requests, { project_id: PROJECT_ID, ...(body.pendingOnly === true ? { status: 'pending' } : {}) });
+      const evidence = await Promise.all(['words', 'speaking', 'profiles'].map(kind => read(LEGACY[kind], { project_id: PROJECT_ID, archive_binding: 'pending' }, true)));
+      const summaries = new Map();
+      evidence.forEach((scan,index) => scan.rows.filter(tagged).forEach(row => {
+        if (index === 0 && row.status !== 'completed') return;
+        const list = summaries.get(row.archive_request_id) || [];
+        list.push({ title: index === 0 ? row.unit_title : index === 1 ? row.scene_title : '学情调查（自评）', score: index === 0 ? score(row.average_score) : index === 1 ? score(row.total_score) : null, submittedAt: timestamp(row) });
+        summaries.set(row.archive_request_id, list);
+      }));
+      return { requests: requests.rows.map(row => { const extra = summaries.get(row.id) || []; const view = publicRequest(row, now()); return { ...view, practiceCount: view.practiceCount + extra.length, practiceScores: [...view.practiceScores, ...extra] }; }).filter(row => body.pendingOnly !== true || row.status === 'pending').sort((a, b) => b.createdAt - a.createdAt), hasMore: requests.hasMore || evidence.some(scan => scan.hasMore) };
     }
     if (action === 'revokeDevice') {
       const id = requiredText(body.sessionId, '设备编号', 100);
@@ -642,16 +750,20 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       if (!student) fail(404, '没有找到该学生。');
       return dashboard(student, data, staff.code === 'july', true);
     }
-    // Approval always follows a human identity check. The code is supplied by the
-    // student and is deliberately absent from the teacher's pending-request list.
-    if (body.identityVerified !== true) fail(400, '请先当面核对姓名、完整班级及学生设备上的验证码，再确认身份核验。');
+    // Authenticated teachers may confirm a visible classroom applicant directly.
+    // Legacy code-based approval remains valid; neither path auto-trusts a name.
+    const classroomApproval = body.approvalMode === 'classroom-confirmation';
+    if (body.identityVerified !== true) fail(400, '请先核对是该学生本人及其完整班级，再同意进入。');
     if (data.hasMore) fail(409, '档案读取尚不完整，暂不能安全核验身份，请联系管理员。');
     const requestId = requiredText(body.requestId, '申请编号', 100);
-    const verificationCode = requiredText(body.verificationCode, '学生验证码', 6);
-    await rate(event, 'approval-code', 8, 15 * 60 * 1000, requestId);
+    let verificationCode;
+    if (!classroomApproval) {
+      verificationCode = requiredText(body.verificationCode, '学生验证码', 6);
+      await rate(event, 'approval-code', 8, 15 * 60 * 1000, requestId);
+    }
     const request = await get(COLLECTIONS.requests, requestId);
     if (!tagged(request) || request.status !== 'pending' || request.expires_at <= now()) fail(409, '此申请已处理或已过期。');
-    if (!equalHash(request.verification_hash, hash(`${requestId}|${verificationCode}`))) fail(400, '验证码不匹配，请在学生设备上重新核对。');
+    if (!classroomApproval && !equalHash(request.verification_hash, hash(`${requestId}|${verificationCode}`))) fail(400, '验证码不匹配，请在学生设备上重新核对。');
     const name = body.name ? requiredText(body.name, '姓名', 60) : request.name;
     const className = body.className ? requiredText(body.className, '完整班级', 100) : request.class_name;
     if (normalizeName(name) !== normalizeName(request.name)) fail(400, '核验姓名与申请不一致，请让学生重新申请。');
@@ -670,7 +782,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       if (existing && (!tagged(existing) || existing.class_key !== student.class_key || normalizeName(existing.name) !== normalizeName(student.name) || existing.active === false)) fail(409, '档案身份冲突，请联系管理员。');
       if (!existing) await put(COLLECTIONS.students, student.id, { ...student, created_at: student.created_at || now(), active: true, approved_by: staff.code }, tx);
       await put(COLLECTIONS.sessions, current.session_id, { id: current.session_id, project_id: PROJECT_ID, auth_version: 1, student_id: student.id, created_at: now(), expires_at: expiresAt, approved_by: staff.code, revoked_at: null }, tx);
-      await put(COLLECTIONS.requests, requestId, { ...current, status: 'approved', student_id: student.id, approved_at: now(), approved_by: staff.code, verified_class_name: className }, tx);
+      await put(COLLECTIONS.requests, requestId, { ...current, status: 'approved', student_id: student.id, approved_at: now(), approved_by: staff.code, approval_method: classroomApproval ? 'classroom-confirmation' : 'student-code', verified_class_name: className }, tx);
     });
     return { student: publicStudent(student), expiresAt };
   }

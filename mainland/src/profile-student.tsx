@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { getCourseStudent, rememberCourseStudent } from './course-session';
+import { ensureCoursePractice } from './classroom-identity';
 import { StudentClassField } from '@/components/student-class-field';
 import { collegeForClass } from '@/lib/class-catalog';
 import { normalizeSchoolClass } from '@/lib/school-classes';
@@ -392,11 +393,13 @@ export function ProfileStudent() {
     setSubmitting(true);
     setError('');
     try {
+      const identity = await ensureCoursePractice({ name: form.studentName, className: form.className });
       const result = await profileRequest<{
         ok: boolean;
         id: string;
         profileKey: string;
       }>('submitProfile', {
+        studentToken: identity.token,
         profileKey: getStudentProfileKey(),
         profile: {
           studentName: form.studentName.trim(),

@@ -10,7 +10,9 @@ export const archivePath = (path = '') =>
   sitePath(`archive${path ? `/${path}` : ''}`);
 export function getArchiveToken() {
   return (
-    getCourseIdentity()?.token ||
+    (getCourseIdentity()?.verified !== false
+      ? getCourseIdentity()?.token
+      : '') ||
     sessionStorage.getItem(STUDENT_TOKEN) ||
     localStorage.getItem(STUDENT_TOKEN) ||
     ''
@@ -26,23 +28,38 @@ export function clearArchiveToken() {
   localStorage.removeItem(STUDENT_TOKEN);
 }
 export type AccessRequest = {
+  requestId?: string;
   requestToken: string;
   verificationCode: string;
   expiresAt: number;
   name: string;
   className: string;
   remember: boolean;
+  practiceToken?: string;
+  practiceExpiresAt?: number;
+  student?: { id: string; name: string; className: string };
 };
 export function getPendingAccess(): AccessRequest | null {
   try {
-    return JSON.parse(sessionStorage.getItem(PENDING) || 'null');
+    const value = JSON.parse(
+      sessionStorage.getItem(PENDING) ||
+        localStorage.getItem(PENDING) ||
+        'null',
+    );
+    return value?.expiresAt > Date.now() ? value : null;
   } catch {
     return null;
   }
 }
 export function setPendingAccess(value: AccessRequest | null) {
-  if (value) sessionStorage.setItem(PENDING, JSON.stringify(value));
-  else sessionStorage.removeItem(PENDING);
+  if (value) {
+    sessionStorage.setItem(PENDING, JSON.stringify(value));
+    if (value.practiceToken)
+      localStorage.setItem(PENDING, JSON.stringify(value));
+  } else {
+    sessionStorage.removeItem(PENDING);
+    localStorage.removeItem(PENDING);
+  }
 }
 export class ArchiveError extends Error {
   constructor(

@@ -13,7 +13,11 @@ import {
   getArchiveToken,
   type ArchiveTask,
 } from './archive-api';
-import { COURSE_SESSION_KEY, getCourseStudent } from './course-session';
+import {
+  COURSE_SESSION_KEY,
+  getCourseStudent,
+  getCourseIdentity,
+} from './course-session';
 import { createSchoolClassDirectory } from '@/lib/school-classes';
 import { SchoolClassFilter } from '@/components/school-class-filter';
 import './course-board.css';
@@ -262,7 +266,9 @@ export function CourseBoard({
     chosen || params.has('lesson') ? lesson : feed.current.lesson;
   const scoreLoad = useCallback(async () => {
     if (teacher && view !== 'scores') return;
-    const token = teacher ? getTeacherToken() : getArchiveToken();
+    const token = teacher
+      ? getTeacherToken()
+      : getArchiveToken() || getCourseIdentity()?.token;
     if (!token || (!teacher && progress)) return;
     setLoading(true);
     try {
@@ -278,7 +284,8 @@ export function CourseBoard({
           'courseStudentScores',
           { studentToken: token },
         );
-        if (getArchiveToken() === token) setPersonal(result.courseProgress);
+        if ((getArchiveToken() || getCourseIdentity()?.token) === token)
+          setPersonal(result.courseProgress);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '成绩读取失败');
@@ -553,6 +560,14 @@ export function CourseBoard({
                       ? '草稿 · 学生不可见'
                       : task.creatorName || '课程任务'}
                   </small>
+                  {teacher && task.type === 'word' && (
+                    <a
+                      className="course-record-link"
+                      href={sitePath('words/teacher')}
+                    >
+                      跟读成绩与录音 →
+                    </a>
+                  )}
                 </div>
                 {teacher && !task.id.startsWith('builtin-') ? (
                   <button
@@ -614,7 +629,7 @@ export function CourseBoard({
             />
           </div>
           <p className="course-note">
-            变化只比较同一任务、同一测验版本的复练。没有成绩不计入均分。
+            变化只比较同一任务、同一评分版本。单词与口语为练习参考分，不代表能力等级；待确认记录不计入正式档案。
           </p>
           <label className="course-check">
             <input
@@ -646,6 +661,20 @@ export function CourseBoard({
                         {row.name}
                       </a>
                       <small>{row.className}</small>
+                      {row.result && (
+                        <details className="course-item-scores">
+                          <summary>本课任务成绩</summary>
+                          {row.result.items.map((item) => (
+                            <div key={item.key}>
+                              <strong>{item.title}</strong>
+                              <span>
+                                最近 {mark(item.latest)} · {item.attempts}次 ·{' '}
+                                {delta(item.change)}
+                              </span>
+                            </div>
+                          ))}
+                        </details>
+                      )}
                     </td>
                     <td>{mark(row.result?.first)}</td>
                     <td>{mark(row.result?.latest)}</td>
@@ -741,7 +770,7 @@ export function CourseBoard({
           次单词跟读未指定课次，仍保留在单词记录中。
         </p>
       )}
-      {!teacher && !progress && !getArchiveToken() && (
+      {!teacher && !progress && !getArchiveToken() && !getCourseIdentity() && (
         <a className="course-signin" href={sitePath('archive')}>
           确认身份，查看自己的每课成绩 →
         </a>
