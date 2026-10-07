@@ -38,6 +38,7 @@ import {
   wordPath,
   wordRequest,
 } from './word-api';
+import { teacherPortrait } from './teacher-persona';
 
 const HUB_TEACHER_KEY = 'july-english-hub.teacher-name';
 
@@ -223,12 +224,16 @@ export function TeacherWorkbench() {
   return (
     <main className="min-h-screen bg-[#f6f7f1] px-4 py-6 text-[#2d4234] sm:px-7">
       <div className="mx-auto max-w-6xl">
-        <header className="flex items-center justify-between gap-4 py-3">
-          <div>
-            <p className="text-xs font-bold tracking-widest text-[#8a957e]">
-              {teacherName} · RAILWAY ENGLISH
-            </p>
-            <h1 className="mt-1 text-2xl font-bold">教师课堂工作台</h1>
+        <header className="relative flex flex-wrap items-center justify-between gap-4 overflow-hidden rounded-[26px] border border-[#d6e4d5] bg-gradient-to-r from-[#e8f3ec] via-[#fbfaf3] to-[#f6e9d8] p-5 shadow-[0_14px_36px_#254f3520] sm:p-7">
+          <div className="flex items-center gap-4 sm:gap-6">
+            <img src={teacherPortrait(teacherName)} alt={`${teacherName}老师的卡通形象`} className="h-20 w-20 rounded-2xl border-2 border-white object-cover shadow-md sm:h-24 sm:w-24" />
+            <div>
+              <p className="text-xs font-bold tracking-widest text-[#90704b]">
+                {teacherName} · RAILWAY ENGLISH
+              </p>
+              <h1 className="mt-1 text-2xl font-bold sm:text-3xl">教师课堂工作台</h1>
+              <p className="mt-1 text-sm text-[#557467]">我的班级 · 每课任务 · 学生成长</p>
+            </div>
           </div>
           <button
             onClick={logout}

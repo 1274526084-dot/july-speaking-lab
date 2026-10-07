@@ -2119,6 +2119,13 @@
   pointer-events: none;
 }
 .at-dashboard-intro, .at-dashboard-side { position: relative; z-index: 1; }
+.at-dashboard-persona { position: relative; z-index: 1; display: grid; justify-items: center; flex: 0 0 144px; gap: 5px; color: #315e4b; font-size: 13px; font-weight: 800; white-space: nowrap; }
+.at-dashboard-persona img { width: 132px; height: 132px; object-fit: cover; border: 5px solid #fffdf7; border-radius: 24px; box-shadow: 0 10px 25px #1c53432c; }
+.at-top-actions img.at-teacher-badge { display: block; width: 42px; height: 42px; padding: 0; object-fit: cover; border: 2px solid #fff; border-radius: 50%; }
+.at-owner-head { display: flex; align-items: center; gap: 15px; margin-bottom: 15px; }
+.at-owner-head img { width: 78px; height: 78px; flex: 0 0 78px; object-fit: cover; border-radius: 18px; box-shadow: 0 6px 18px #184d332b; }
+.at-owner-head h3 { margin: 0; }
+.at-owner-head p { margin: 4px 0 0; color: #647568; font-size: 15px; }
 .at-dashboard-intro > span { display: inline-flex; align-items: center; gap: 9px; color: #a76039; font-size: 14px; font-weight: 850; letter-spacing: .1em; }
 .at-dashboard-intro > span svg { width: 21px; height: 21px; }
 .at-dashboard-intro h1 { margin: 9px 0 2px; font-size: clamp(31px, 2.35vw, 42px); line-height: 1.25; letter-spacing: .015em; }
@@ -2160,6 +2167,8 @@
 @media (max-width: 1000px) {
   .at-dashboard-hero { align-items: start; flex-direction: column; }
   .at-dashboard-side { flex-wrap: wrap; }
+  .at-dashboard-persona { position: absolute; top: 18px; right: 20px; }
+  .at-dashboard-intro { padding-right: 165px; }
 }
 @media (max-width: 760px) {
   .at-shell { padding: 20px 16px 0; }
@@ -2169,6 +2178,9 @@
   .at-dashboard-hero { padding: 22px; min-height: 0; border-radius: 18px; }
   .at-dashboard-intro h1 { font-size: 29px; }
   .at-dashboard-intro p { font-size: 15px; }
+  .at-dashboard-intro { padding-right: 0; }
+  .at-dashboard-persona { position: static; display: flex; flex-basis: auto; align-items: center; }
+  .at-dashboard-persona img { width: 76px; height: 76px; border-width: 3px; border-radius: 16px; }
   .at-dashboard-side > div { min-width: 100px; padding: 11px 13px; }
   .at-dashboard-side strong { font-size: 24px; }
   .at-dashboard-side a { margin-left: 0; }

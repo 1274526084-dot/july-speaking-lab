@@ -12,7 +12,7 @@ type ScoreStudent = {
   courseProgress?: CourseProgress;
 };
 type CourseUnit = { number: number; title?: string; lessons?: number[] };
-type LessonTask = { id?: string; title: string; unit: string; lesson: string; type: string; href?: string; classes?: string[]; status?: string };
+type LessonTask = { id?: string; title: string; unit: string; lesson: string; type: string; href?: string; classes?: string[]; status?: string; creatorName?: string };
 
 const coordinate = (value?: string) => Number(String(value || '').match(/\d+/)?.[0] || 0);
 const average = (values: (number | null | undefined)[]) => {
@@ -158,7 +158,7 @@ export function TeacherCourseScores({
         <section className="tc-panel">
           <h3><ClipboardList /> 本课任务 <span>{selectedTasks.length} 项</span></h3>
           {selectedTasks.length ? <div className="tc-task-list">{selectedTasks.map((task, index) => <article key={task.id || `${task.title}-${index}`}>
-            <div><strong>{task.title}</strong><span>{typeName[task.type] || '课堂任务'} · {task.status === 'draft' ? '草稿' : '已发布'}</span></div>
+            <div><strong>{task.title}</strong><span>{task.creatorName ? `${task.creatorName} 创建 · ` : ''}{typeName[task.type] || '课堂任务'} · {task.status === 'draft' ? '草稿' : '已发布'}</span></div>
             {task.href && <a href={task.href} target="_blank" rel="noreferrer" aria-label={`查看${task.title}`}><ArrowRight /></a>}
           </article>)}</div> : <p className="tc-empty">这节课还没有任务。可在“任务与组题”中添加。</p>}
         </section>

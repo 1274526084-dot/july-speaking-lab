@@ -83,15 +83,6 @@ export const BUILTIN_COURSE_TASKS: ArchiveTask[] = [
     description: '',
     href: `/july-Englishclass/${file}`,
   })),
-  {
-    id: 'builtin-lesson3-words',
-    title: '第三课单词跟读',
-    unit: 'Unit 1',
-    lesson: 'Lesson 3',
-    type: 'word',
-    description: '',
-    href: '/july-speaking-lab/words/?unit=TU8ZGE',
-  },
   ...[
     ['lesson-3-vocabulary-matching.html', '词组匹配（一）'],
     ['lesson-3-vocabulary-matching-2.html', '词组匹配（二）'],
@@ -343,7 +334,12 @@ export function CourseBoard({
         !task.classes?.length ||
         (className && task.classes.includes(className)),
     );
-  const allTasks = [...BUILTIN_COURSE_TASKS, ...tasks];
+  const allTasks = [...BUILTIN_COURSE_TASKS, ...tasks].filter(
+    (task) =>
+      teacher ||
+      !task.classes?.length ||
+      (className && task.classes.includes(className)),
+  );
   const selectedTasks = allTasks.filter(
     (task) =>
       coordinate(task.unit) === displayedUnit &&

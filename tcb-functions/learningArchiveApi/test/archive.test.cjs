@@ -362,6 +362,24 @@ test('the shared Lesson 3 read-aloud unit contributes to Lesson 3 progress', () 
   assert.equal(result.unassignedWordCount, 0);
 });
 
+test('each teacher-owned read-aloud unit maps to Lesson 3 by its published task', () => {
+  const codes = [
+    ['july-word', 'TU8ZGE'],
+    ['cherie-word', '6FE6EECB'],
+    ['lisa-word', '42MBXJ'],
+    ['alice-word', 'VNTRFW'],
+  ];
+  for (const [unitId, code] of codes) {
+    const result = lessonProgress({
+      words: [word(unitId, '张同学', '26-城轨信号54班', { unit_id: unitId, average_score: 86 })],
+      wordUnits: [{ id: unitId, share_code: code }],
+      tasks: [{ type: 'word', unit: 'Unit 1', lesson: 'Lesson 3', href: `https://example.test/words/?unit=${code}` }],
+    });
+    assert.equal(result.lessons.find(row => row.unit === 1 && row.lesson === 3)?.latest, 86, code);
+    assert.equal(result.unassignedWordCount, 0, code);
+  }
+});
+
 const copy = value => structuredClone(value);
 function memoryDb(seed = {}, options = {}) {
   let tables = new Map(Object.entries(seed).map(([name, rows]) => [name, new Map(rows.map(row => [row.id || row._id, copy(row)]))]));

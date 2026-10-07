@@ -57,6 +57,7 @@ import { type ArchiveTask as CourseTask } from './archive-api';
 import { LearningAvatar, SkillRadar } from './archive-visuals';
 import { type EnglishProfile, SKILL_LABELS } from './profile-api';
 import { getWordToken, wordPath, wordRequest } from './word-api';
+import { teacherPortrait } from './teacher-persona';
 import './archive-teacher.css';
 
 type Tab = 'students' | 'scores' | 'tasks' | 'news' | 'devices' | 'overview';
@@ -634,17 +635,19 @@ export function ArchiveTeacher() {
             <RefreshCw className={refreshing ? 'at-spin' : ''} />
             <span>刷新数据</span>
           </button>
-          <span className="at-teacher-badge">
-            {teacherName.slice(0, 1).toUpperCase()}
-          </span>
+          <img className="at-teacher-badge" src={teacherPortrait(data.teacher?.code || teacherName)} alt={`${teacherName}老师的形象`} />
         </div>
       </header>
       <div className="at-shell">
         <section className="at-dashboard-hero">
           <div className="at-dashboard-intro">
             <span><TrainFront /> RAILWAY ENGLISH · TEACHER</span>
-            <h1>班级英语成长路线</h1>
+            <h1>{teacherName}的班级英语成长路线</h1>
             <p>每课任务、成绩与进步，一站查看。</p>
+          </div>
+          <div className="at-dashboard-persona">
+            <img src={teacherPortrait(data.teacher?.code || teacherName)} alt={`${teacherName}老师的卡通形象`} />
+            <span>{teacherName} · 任课教师</span>
           </div>
           <div className="at-dashboard-side">
             <div><strong>{data.students.length}</strong><span>学生档案</span></div>
@@ -730,7 +733,7 @@ export function ArchiveTeacher() {
                   <p className="at-help">四位老师合计 {overview.teachers.reduce((sum, row) => sum + row.studentCount, 0)} 份档案；另有 {overview.unassignedClassCount} 个班级尚未分给这四位老师。</p>
                   <div className="at-owner-grid">
                     {overview.teachers.map((owner) => <article className="at-owner-card" key={owner.code}>
-                      <h3>{owner.name}</h3><p>{owner.classes.length} 个班 · {owner.studentCount} 份档案</p>
+                      <div className="at-owner-head"><img src={teacherPortrait(owner.code)} alt={`${owner.name}老师的形象`} /><div><h3>{owner.name}</h3><p>{owner.classes.length} 个班 · {owner.studentCount} 份档案</p></div></div>
                       <div className="at-table-wrap"><table className="at-table"><thead><tr><th>班级</th><th>人数</th><th>单词</th><th>口语</th><th>小测</th></tr></thead><tbody>
                         {owner.classes.map((group) => <tr key={group.className}><td>{group.className}</td><td>{group.studentCount}</td><td>{scoreText(group.wordAverage)}</td><td>{scoreText(group.speakingAverage)}</td><td>{scoreText(group.quizAverage)}</td></tr>)}
                       </tbody></table></div>
