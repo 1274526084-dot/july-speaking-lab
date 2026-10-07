@@ -50,7 +50,8 @@ import { RAILWAY_NEWS_SEEDS } from '@/lib/railway-news';
 import { getTeacherToken, sitePath } from './api';
 import { ArchiveError, archiveRequest, type Unit2Summary } from './archive-api';
 import { Unit2Panel } from './unit2-panel';
-import { CourseBoard } from './course-board';
+import { CourseBoard, type CourseProgress } from './course-board';
+import { TeacherCourseScores } from './teacher-course-scores';
 import { ClassroomAccess } from './classroom-access';
 import { type ArchiveTask as CourseTask } from './archive-api';
 import { LearningAvatar, SkillRadar } from './archive-visuals';
@@ -58,7 +59,7 @@ import { type EnglishProfile, SKILL_LABELS } from './profile-api';
 import { getWordToken, wordPath, wordRequest } from './word-api';
 import './archive-teacher.css';
 
-type Tab = 'students' | 'unit2' | 'tasks' | 'news' | 'devices' | 'overview';
+type Tab = 'students' | 'scores' | 'tasks' | 'news' | 'devices' | 'overview';
 type TaskType =
   | 'word'
   | 'speaking'
@@ -97,6 +98,7 @@ type ArchiveNews = {
 };
 type Student = {
   unit2?: Unit2Summary;
+  courseProgress?: CourseProgress;
   id: string;
   name: string;
   className: string;
@@ -430,8 +432,8 @@ export function ArchiveTeacher() {
       ? 'overview'
       : new URLSearchParams(location.search).get('tab') === 'devices'
       ? 'devices'
-      : new URLSearchParams(location.search).get('tab') === 'unit2'
-        ? 'unit2'
+      : ['unit2', 'scores'].includes(new URLSearchParams(location.search).get('tab') || '')
+        ? 'scores'
         : 'students',
   );
   const [data, setData] = useState<Dashboard>({
@@ -638,23 +640,24 @@ export function ArchiveTeacher() {
         </div>
       </header>
       <div className="at-shell">
-        <section className="at-section-heading">
-          <div>
-            <h1>班级学习档案</h1>
-            <p>
-              {data.students.length}人 · {directory.groups.length}个班级
-            </p>
+        <section className="at-dashboard-hero">
+          <div className="at-dashboard-intro">
+            <span><TrainFront /> RAILWAY ENGLISH · TEACHER</span>
+            <h1>班级英语成长路线</h1>
+            <p>每课任务、成绩与进步，一站查看。</p>
           </div>
-          <a className="at-secondary" href={sitePath('workbench')}>
-            课程与每课成绩 →
-          </a>
+          <div className="at-dashboard-side">
+            <div><strong>{data.students.length}</strong><span>学生档案</span></div>
+            <div><strong>{data.teacher?.canManageCourse ? directory.groups.length : data.teacher?.assignedClasses.length || 0}</strong><span>{data.teacher?.canManageCourse ? '可查看班级' : '负责班级'}</span></div>
+            <a href={sitePath('workbench')}>课程工作台 <ArrowRight /></a>
+          </div>
         </section>
         <nav className="at-tabs" aria-label="教师档案功能">
           {(
             [
               { id: 'students', label: '班级档案', icon: UsersRound },
               { id: 'overview', label: '四师总览', icon: Layers3 },
-              { id: 'unit2', label: '第二课成绩', icon: GraduationCap },
+              { id: 'scores', label: '每课成绩', icon: GraduationCap },
               { id: 'tasks', label: '任务与组题', icon: ClipboardList },
               { id: 'news', label: '铁路英语窗', icon: Newspaper },
               { id: 'devices', label: '设备确认', icon: ShieldCheck },
@@ -741,18 +744,14 @@ export function ArchiveTeacher() {
                 </>}
               </section>
             )}
-            {tab === 'unit2' && (
-              <section className="at-panel">
-                <div className="at-panel-heading">
-                  <h2>Unit 1 · 第2课作答明细</h2>
-                  <span>每30秒自动更新</span>
-                </div>
-                <div className="at-filters">
+            {tab === 'scores' && (
+              <>
+                <div className="at-filters at-score-filters">
                   <input
                     aria-label="搜索学生"
-                    placeholder="姓名或班级关键词"
+                    placeholder="搜索学生姓名或班级"
                     value={query}
-                    onChange={(e) => setQuery(e.target.value)}
+                    onChange={(event) => setQuery(event.target.value)}
                   />
                   <SchoolClassFilter
                     college={collegeFilter}
@@ -762,119 +761,14 @@ export function ArchiveTeacher() {
                     onClass={setClassFilter}
                   />
                 </div>
-                <div className="at-table-wrap">
-                  <table className="at-table">
-                    <thead>
-                      <tr>
-                        <th>姓名 / 班级</th>
-                        <th>平陆运河首次</th>
-                        <th>动词最近</th>
-                        <th>时态最近</th>
-                        <th>课堂填空</th>
-                        <th>作文</th>
-                        <th>完成项目</th>
-                        <th>档案</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {students.map((student) => (
-                        <tr key={student.id}>
-                          <td>
-                            {student.name}
-                            <br />
-                            <small>{student.className}</small>
-                          </td>
-                          <td>{scoreText(student.unit2?.pretest)}</td>
-                          <td>
-                            {scoreText(student.unit2?.stages.verbs?.latest)}
-                          </td>
-                          <td>{scoreText(student.unit2?.postPractice)}</td>
-                          <td>
-                            {scoreText(
-                              student.unit2?.stages.writingClass?.latest,
-                            )}
-                          </td>
-                          <td>
-                            {scoreText(
-                              student.unit2?.stages.writingEssay?.latest,
-                            )}
-                          </td>
-                          <td>{student.unit2?.completed || 0}/4</td>
-                          <td>
-                            <button
-                              className="at-text-button"
-                              onClick={() => setSelected(student)}
-                            >
-                              查看原文与历史 →
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="at-help">
-                  分数均换算为100分得分率。写作记录保留原文与规则评分依据；点击学生可查看本课雷达和所有尝试。
-                </p>
-                <section className="at-metrics">
-                  <Metric
-                    label="平陆运河首次均分"
-                    value={scoreText(
-                      average(
-                        students.map((student) => student.unit2?.pretest),
-                      ),
-                    )}
-                    note="当前筛选班级 · 已提交学生"
-                    icon={<GraduationCap />}
-                  />
-                  <Metric
-                    label="动词最近均分"
-                    value={scoreText(
-                      average(
-                        students.map(
-                          (student) => student.unit2?.stages.verbs?.latest,
-                        ),
-                      ),
-                    )}
-                    note="当前筛选班级 · 已提交学生"
-                    icon={<BookOpen />}
-                  />
-                  <Metric
-                    label="时态最近均分"
-                    value={scoreText(
-                      average(
-                        students.map((student) => student.unit2?.postPractice),
-                      ),
-                    )}
-                    note="当前筛选班级 · 已提交学生"
-                    icon={<ClipboardList />}
-                  />
-                  <Metric
-                    label="写作综合得分率"
-                    value={scoreText(
-                      average(
-                        students.map((student) => student.unit2?.radar.writing),
-                      ),
-                    )}
-                    note="课堂与作文均完成的学生"
-                    icon={<FilePenLine />}
-                  />
-                </section>
-                <p className="at-help">
-                  当前筛选范围：
-                  {
-                    students.filter(
-                      (student) => (student.unit2?.attemptCount || 0) > 0,
-                    ).length
-                  }
-                  人已参与，
-                  {
-                    students.filter((student) => student.unit2?.completed === 4)
-                      .length
-                  }
-                  人完成四项。
-                </p>
-              </section>
+                <TeacherCourseScores
+                  students={students}
+                  tasks={data.tasks}
+                  assignedClasses={data.teacher?.assignedClasses || []}
+                  canManageCourse={Boolean(data.teacher?.canManageCourse)}
+                  onStudent={(id) => setSelected(data.students.find((student) => student.id === id) || null)}
+                />
+              </>
             )}
             {tab === 'students' && (
               <>

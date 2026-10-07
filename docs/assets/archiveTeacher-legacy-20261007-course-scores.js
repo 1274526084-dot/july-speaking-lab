@@ -1,0 +1,1 @@
+System.register(["./chunks/school-class-filter-legacy-20261007-course-scores.js","./chunks/archive-main-legacy-20261007-course-scores.js"],function(e,s){return{setters:[function(e){},function(e){}],execute:function(){}}});

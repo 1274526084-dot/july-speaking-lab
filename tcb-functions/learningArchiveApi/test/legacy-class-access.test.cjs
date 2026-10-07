@@ -17,6 +17,8 @@ for (const service of ['wordLabApi', 'speakingLabApi']) {
     assert.equal(access.className(row, collection), '26-人工智能16班');
     assert.equal(access.canSee('lisa', row, collection), true);
     assert.equal(access.canSee('cherie', row, collection), false);
+    assert.equal(access.canSee('cherie', { id: 'cherie-class', student_name: '王同学', class_name: '26-车辆68班' }, collection), true);
+    assert.equal(access.canSee('cherie', { id: 'another-teacher-class', student_name: '王同学', class_name: '26-无人机1班' }, collection), false);
     assert.equal(access.canSee('july', row, collection), true);
     assert.equal(access.canSee('lisa', { ...row, student_name: '另一位同学' }, collection), false);
   });

@@ -43,6 +43,13 @@ The illustration selection is currently remembered on this browser only.
   it does not expose other teachers' individual student records. July can edit the
   ownership list there. New tasks remain visible in the shared teacher task library,
   but non-July teachers can publish only to their own classes.
+- `archive/teacher/?tab=scores` shows each unit's three lessons, task list,
+  per-task evidence, per-lesson statistics and a course-wide summary. Missing
+  grades remain missing rather than becoming zero. The old `?tab=unit2` link
+  redirects into this general scores view.
+- Cherie (颜钰) owns six classes: 26-车辆68班、26-车辆69班、26-城轨车辆58班、
+  26-人工智能15班、26-城轨运营68班、26-城轨运营69班. The five unmapped
+  翟雪丽 classes are intentionally not assigned to her.
 
 ## October 2026 roster correction
 

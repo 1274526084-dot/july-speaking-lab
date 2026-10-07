@@ -257,6 +257,8 @@ test('teacher assignments scope student records and tasks while July manages agg
   assert.equal(lisa.students[0].name, '林同学');
   const overall = await f.call('teacherOverview', { token: f.tokens.cherie });
   assert.equal(overall.teachers.find(row => row.code === 'lisa').studentCount, 1);
+  assert.deepEqual(overall.assignments.cherie, ['26-车辆68班', '26-车辆69班', '26-城轨车辆58班', '26-人工智能15班', '26-城轨运营68班', '26-城轨运营69班']);
+  assert.equal(overall.assignments.cherie.includes('26-无人机1班'), false);
   assert.equal(overall.canEdit, false);
   assert.equal((await f.call('saveTeacherAssignments', { token: f.tokens.lisa, assignments: overall.assignments })).status, 403);
   const changed = structuredClone(overall.assignments);
@@ -603,7 +605,7 @@ test('ambiguous incomplete classes require teacher corroboration and never merge
 });
 
 test('legacy survey detail remains July-only across teacher summaries and individual history', async () => {
-  const f = fixture({ [LEGACY.profiles]: [profile('p1', '张同学', '26-无人机1班')], [LEGACY.words]: [word('w1', '张同学', '26-无人机1班')] });
+  const f = fixture({ [LEGACY.profiles]: [profile('p1', '张同学', '26-车辆68班')], [LEGACY.words]: [word('w1', '张同学', '26-车辆68班')] });
   const july = await f.call('teacherDashboard', { token: f.tokens.july });
   assert.equal(july.students[0].profile.entrance_english_score, 96);
   const cherie = await f.call('teacherDashboard', { token: f.tokens.cherie });
@@ -664,7 +666,7 @@ test('quiz answers stay private until server-scored submission; retries are idem
 
 test('quiz cannot be submitted by another class or from a draft; task ownership supports copying', async () => {
   const f = fixture();
-  const saved = await f.call('saveTask', { token: f.tokens.cherie, task: quiz({ status: 'draft', classes: ['26-无人机1班'] }) });
+  const saved = await f.call('saveTask', { token: f.tokens.cherie, task: quiz({ status: 'draft', classes: ['26-车辆68班'] }) });
   const auth = await f.authorize();
   const payload = { studentToken: auth.studentToken, taskId: saved.task.id, taskVersion: saved.task.version, requestId: 'request-draft-123', answers: [0, 1] };
   assert.equal((await f.call('submitQuiz', payload)).status, 404);

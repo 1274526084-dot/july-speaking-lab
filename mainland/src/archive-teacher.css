@@ -2080,3 +2080,101 @@
     height: 94px;
   }
 }
+
+/* Classroom-readable teacher dashboard. Keep the original data panels, but
+   give the navigation and score tables a clear visual hierarchy. */
+.archive-teacher {
+  font-size: 16px;
+  background: #f3f6f1;
+}
+.at-shell { max-width: 1620px; padding: 30px 34px 0; }
+.at-topbar { min-height: 82px; padding-inline: max(34px, calc((100vw - 1552px) / 2)); }
+.at-brand strong { font-size: 17px; }
+.at-brand small { font-size: 13px; letter-spacing: .06em; }
+.at-top-actions > a, .at-top-actions > button { font-size: 15px; }
+.at-dashboard-hero {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 28px;
+  min-height: 187px;
+  overflow: hidden;
+  padding: 30px 42px;
+  border-radius: 23px;
+  background: linear-gradient(110deg, #fdfbf4, #e4eee6);
+  border: 1px solid #d9e6dc;
+  box-shadow: 0 12px 34px #1946380d;
+}
+.at-dashboard-hero::before {
+  content: '';
+  position: absolute;
+  left: 32%;
+  right: -7%;
+  bottom: -105px;
+  height: 150px;
+  border-top: 3px solid #d4a67566;
+  border-radius: 50%;
+  transform: rotate(-4deg);
+  pointer-events: none;
+}
+.at-dashboard-intro, .at-dashboard-side { position: relative; z-index: 1; }
+.at-dashboard-intro > span { display: inline-flex; align-items: center; gap: 9px; color: #a76039; font-size: 14px; font-weight: 850; letter-spacing: .1em; }
+.at-dashboard-intro > span svg { width: 21px; height: 21px; }
+.at-dashboard-intro h1 { margin: 9px 0 2px; font-size: clamp(31px, 2.35vw, 42px); line-height: 1.25; letter-spacing: .015em; }
+.at-dashboard-intro p { color: #536f61; font-size: 17px; }
+.at-dashboard-side { display: flex; align-items: center; gap: 12px; }
+.at-dashboard-side > div { display: grid; min-width: 126px; padding: 15px 19px; border: 1px solid #d4e3d7; border-radius: 14px; background: #ffffffd9; }
+.at-dashboard-side strong { color: #195142; font-size: 30px; line-height: 1.2; }
+.at-dashboard-side span { color: #607569; font-size: 14px; }
+.at-dashboard-side a { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; padding: 13px 16px; border-radius: 12px; background: #1b5544; color: white; font-size: 15px; font-weight: 800; white-space: nowrap; }
+.at-dashboard-side a svg { width: 17px; height: 17px; }
+.at-tabs { gap: 10px; margin-top: 18px; margin-bottom: 25px; overflow-x: auto; border: 0; padding: 3px 0; }
+.at-tabs button { gap: 8px; padding: 12px 18px; border: 1px solid transparent; border-radius: 12px; color: #536d60; font-size: 16px; }
+.at-tabs button:hover { background: #e9f0e9; }
+.at-tabs button.active { border-color: #bfd6c8; background: #e6f0e9; color: #15513e; }
+.at-tabs b { font-size: 12px; }
+.at-section-heading h2 { font-size: 29px; }
+.at-section-heading p:not(.at-eyebrow) { font-size: 15px; }
+.at-eyebrow { font-size: 12px !important; }
+.at-pill { font-size: 14px; padding: 6px 12px; }
+.at-primary, .at-secondary { min-height: 46px; font-size: 15px !important; }
+.at-panel { padding: 28px; border-radius: 18px; box-shadow: 0 5px 22px #1946380b; }
+.at-panel-heading h3 { font-size: 20px; }
+.at-panel-heading > span { font-size: 14px; }
+.at-filters input, .at-filters select, .archive-teacher .at-search input { font-size: 16px; }
+.at-table th { font-size: 14px; padding: 12px 15px; background: #f3f7ef; color: #416756; }
+.at-table td { font-size: 15px; padding: 15px; }
+.at-table td small { font-size: 13px; }
+.at-metric > div, .at-metric > small { font-size: 14px; }
+.at-class-card strong { font-size: 16px; }
+.at-class-card dt, .at-class-card > small { font-size: 13px; }
+.at-class-card > div > span { font-size: 13px; }
+.at-owner-card { padding: 22px; border-radius: 18px; }
+.at-owner-card h3 { font-size: 21px; }
+.at-owner-card > p { font-size: 15px; }
+.at-owner-card .at-table { font-size: 15px; }
+.at-owner-card .at-table th, .at-owner-card .at-table td { padding: 12px 9px; font-size: 14px; }
+.at-score-filters { margin: 0 0 21px; }
+.at-score-filters input { min-height: 50px !important; }
+@media (max-width: 1000px) {
+  .at-dashboard-hero { align-items: start; flex-direction: column; }
+  .at-dashboard-side { flex-wrap: wrap; }
+}
+@media (max-width: 760px) {
+  .at-shell { padding: 20px 16px 0; }
+  .at-topbar { padding-inline: 18px; }
+  .at-brand strong { font-size: 14px; }
+  .at-brand small { font-size: 11px; }
+  .at-dashboard-hero { padding: 22px; min-height: 0; border-radius: 18px; }
+  .at-dashboard-intro h1 { font-size: 29px; }
+  .at-dashboard-intro p { font-size: 15px; }
+  .at-dashboard-side > div { min-width: 100px; padding: 11px 13px; }
+  .at-dashboard-side strong { font-size: 24px; }
+  .at-dashboard-side a { margin-left: 0; }
+  .at-tabs { justify-content: start; }
+  .at-tabs button { font-size: 14px; padding: 10px 12px; }
+  .at-panel { padding: 18px; }
+  .at-table th { font-size: 13px; }
+  .at-table td { font-size: 14px; }
+}

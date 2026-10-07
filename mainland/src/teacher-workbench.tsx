@@ -245,6 +245,7 @@ export function TeacherWorkbench() {
         >
           {[
             { title: '班级档案', href: sitePath('archive/teacher') },
+            { title: '每课任务与成绩', href: sitePath('archive/teacher') + '?tab=scores' },
             { title: '四师总览', href: sitePath('archive/teacher') + '?tab=overview' },
             { title: '单词与录音', href: wordPath('teacher') },
             { title: '口语与录音', href: sitePath('teacher') },
@@ -289,8 +290,8 @@ export function TeacherWorkbench() {
             {teacherName.toLowerCase() === 'july' && (
               <a href={profilePath('teacher')}>学情统计 →</a>
             )}
-            <a href={sitePath('archive/teacher') + '?tab=unit2'}>
-              Unit 1 · 第2课作答明细 →
+            <a href={sitePath('archive/teacher') + '?tab=scores'}>
+              每课任务与成绩 →
             </a>
             <button
               onClick={() =>

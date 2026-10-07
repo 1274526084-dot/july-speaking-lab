@@ -59,7 +59,7 @@ type ScoreStudent = {
   className: string;
   courseProgress: CourseProgress;
 };
-const builtin: ArchiveTask[] = [
+export const BUILTIN_COURSE_TASKS: ArchiveTask[] = [
   {
     id: 'builtin-speaking',
     title: '校园情景口语',
@@ -343,7 +343,7 @@ export function CourseBoard({
         !task.classes?.length ||
         (className && task.classes.includes(className)),
     );
-  const allTasks = [...builtin, ...tasks];
+  const allTasks = [...BUILTIN_COURSE_TASKS, ...tasks];
   const selectedTasks = allTasks.filter(
     (task) =>
       coordinate(task.unit) === displayedUnit &&
