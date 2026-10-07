@@ -1,0 +1,1 @@
+System.register(["./chunks/school-class-filter-legacy-20261007-learning-charts.js","./chunks/word-main-legacy-20261007-learning-charts.js"],function(n,e){return{setters:[function(n){},function(n){}],execute:function(){}}});

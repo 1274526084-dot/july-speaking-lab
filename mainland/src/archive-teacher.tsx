@@ -52,12 +52,13 @@ import { ArchiveError, archiveRequest, type Unit2Summary } from './archive-api';
 import { Unit2Panel } from './unit2-panel';
 import { CourseBoard, type CourseProgress } from './course-board';
 import { TeacherCourseScores } from './teacher-course-scores';
+import { CourseTrendChart } from './course-charts';
 import { ClassroomAccess } from './classroom-access';
 import { type ArchiveTask as CourseTask } from './archive-api';
 import { LearningAvatar, SkillRadar } from './archive-visuals';
 import { type EnglishProfile, SKILL_LABELS } from './profile-api';
 import { getWordToken, wordPath, wordRequest } from './word-api';
-import { teacherPortrait } from './teacher-persona';
+import { teacherBanner, teacherPortrait } from './teacher-persona';
 import './archive-teacher.css';
 
 type Tab = 'students' | 'scores' | 'tasks' | 'news' | 'devices' | 'overview';
@@ -193,6 +194,7 @@ type History = {
   };
 };
 type StudentDetail = {
+  courseProgress?: CourseProgress;
   unit2?: Unit2Summary;
   student?: Student;
   profile?: Partial<EnglishProfile> | null;
@@ -639,15 +641,11 @@ export function ArchiveTeacher() {
         </div>
       </header>
       <div className="at-shell">
-        <section className="at-dashboard-hero">
+        <section className="at-dashboard-hero" style={{ backgroundImage: `linear-gradient(90deg, rgba(255,253,246,.9), rgba(255,253,246,.55) 49%, rgba(255,253,246,0) 72%), url('${teacherBanner(data.teacher?.code || teacherName)}')` }}>
           <div className="at-dashboard-intro">
-            <span><TrainFront /> RAILWAY ENGLISH · TEACHER</span>
-            <h1>{teacherName}的班级英语成长路线</h1>
-            <p>每课任务、成绩与进步，一站查看。</p>
-          </div>
-          <div className="at-dashboard-persona">
-            <img src={teacherPortrait(data.teacher?.code || teacherName)} alt={`${teacherName}老师的卡通形象`} />
-            <span>{teacherName} · 任课教师</span>
+            <span><TrainFront /> RAILWAY ENGLISH · 教师档案馆</span>
+            <h1>{teacherName} · 英语成长档案</h1>
+            <p>看见每一课的表现与进步。</p>
           </div>
           <div className="at-dashboard-side">
             <div><strong>{data.students.length}</strong><span>学生档案</span></div>
@@ -1386,6 +1384,15 @@ function StudentDialog({
                 </strong>
               </div>
             </div>
+            <section className="at-panel at-personal-trend">
+              <div className="at-panel-heading"><h3>每课成绩变化</h3><span>首次 / 最近 · 缺交不按0分</span></div>
+              <CourseTrendChart
+                label={`${student.name}的每课成绩变化`}
+                points={[...((detail?.courseProgress || student.courseProgress)?.lessons || [])]
+                  .sort((a, b) => a.unit - b.unit || a.lesson - b.lesson)
+                  .map((row) => ({ label: `${row.unit}-${row.lesson}`, first: row.first, latest: row.latest }))}
+              />
+            </section>
             {detail?.profileRestricted || student.profileRestricted ? (
               <Notice>
                 <ShieldCheck />

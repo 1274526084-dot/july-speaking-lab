@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { archiveRequest } from './archive-api';
 import { BUILTIN_COURSE_TASKS, type CourseProgress, type LessonResult } from './course-board';
 import { getTeacherToken } from './api';
+import { normalizeSchoolClass } from '@/lib/school-classes';
+import { ClassScoreBars, CourseTrendChart, ScoreDistribution } from './course-charts';
 import './teacher-course-scores.css';
 
 type ScoreStudent = {
@@ -48,6 +50,7 @@ export function TeacherCourseScores({
   const [showAll, setShowAll] = useState(false);
   const [page, setPage] = useState(1);
   const [feedError, setFeedError] = useState('');
+  const [chartStudentId, setChartStudentId] = useState('');
   useEffect(() => {
     let active = true;
     void archiveRequest<{ units?: CourseUnit[]; current?: { unit: number; lesson: number } }>('courseFeed', {}, getTeacherToken())
@@ -99,6 +102,33 @@ export function TeacherCourseScores({
   const selectedTasks = visibleTasks.filter((task) => coordinate(task.unit) === unit && coordinate(task.lesson) === lesson);
   const scoreRows = students.map((student) => ({ student, result: resultFor(student, unit, lesson) }));
   const activeRows = scoreRows.filter((row) => row.result?.latest != null);
+  const lessonTrend = [1, 2, 3].map((number) => ({
+    label: `第${number}课`,
+    first: average(students.map((student) => resultFor(student, unit, number)?.first)),
+    latest: average(students.map((student) => resultFor(student, unit, number)?.latest)),
+    participants: students.filter((student) => resultFor(student, unit, number)?.latest != null).length,
+  }));
+  const classRows = useMemo(() => {
+    const groups = new Map<string, ScoreStudent[]>();
+    for (const student of students) {
+      const name = normalizeSchoolClass(student.className) || student.className;
+      groups.set(name, [...(groups.get(name) || []), student]);
+    }
+    return [...groups.entries()].map(([name, rows]) => ({
+      name,
+      total: rows.length,
+      graded: rows.filter((row) => resultFor(row, unit, lesson)?.latest != null).length,
+      average: average(rows.map((row) => resultFor(row, unit, lesson)?.latest)),
+    })).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
+  }, [students, unit, lesson]);
+  const chartStudent = students.find((student) => student.id === chartStudentId);
+  const studentTrend = chartStudent ? [1, 2, 3].map((number) => {
+    const result = resultFor(chartStudent, unit, number);
+    return { label: `第${number}课`, first: result?.first, latest: result?.latest };
+  }) : [];
+  useEffect(() => {
+    if (chartStudentId && chartStudent) document.getElementById('tc-student-trend')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [chartStudentId, chartStudent]);
   const displayRows = showAll ? scoreRows : activeRows;
   const pageCount = Math.max(1, Math.ceil(displayRows.length / 20));
   const pageRows = displayRows.slice((Math.min(page, pageCount) - 1) * 20, Math.min(page, pageCount) * 20);
@@ -122,7 +152,7 @@ export function TeacherCourseScores({
     <section className="tc-scores" aria-label="每课任务与成绩">
       <div className="tc-overview">
         <div className="tc-overview-heading">
-          <span><TrainFront size={22} /> COURSE JOURNEY</span>
+          <span><TrainFront size={22} /> 全学期学习轨迹</span>
           <h2>课程总览</h2>
           <p>按当前筛选范围，汇总全学期的学习进展。</p>
         </div>
@@ -135,8 +165,13 @@ export function TeacherCourseScores({
       <p className="tc-fair-note">总均分先汇总每名学生各课的最近成绩，再计算当前范围的均分；未提交的课次不按 0 分计算。练习分仅供教学反馈。</p>
       {feedError && <p className="tc-feed-error" role="status">{feedError}</p>}
 
+      <section className="tc-panel tc-main-trend">
+        <div className="tc-chart-heading"><div><span>进步曲线</span><h3>Unit {unit} · 三课成绩变化</h3><p>每课有成绩学生的首次与最近均分。</p></div><strong>{lessonTrend.filter((point) => point.latest != null).length}/3 课有成绩</strong></div>
+        <CourseTrendChart points={lessonTrend} label={`Unit ${unit}班级成绩变化`} />
+      </section>
+
       <div className="tc-unit-heading">
-        <div><span>01 / LESSON MAP</span><h2>选择单元与课次</h2></div>
+        <div><span>课次导航</span><h2>选择单元与课次</h2></div>
         <label>单元
           <select value={unit} onChange={(event) => { setUnit(Number(event.target.value)); setLesson(1); }}>
             {units.map((row) => <option key={row.number} value={row.number}>Unit {row.number}{row.title ? ` · ${row.title}` : ''}</option>)}
@@ -153,7 +188,18 @@ export function TeacherCourseScores({
         </button>)}
       </div>
 
-      <div className="tc-detail-heading"><div><span>02 / LESSON DETAIL</span><h2>Unit {unit} · 第 {lesson} 课</h2></div><p>{activeRows.length} 人有成绩 · 最近均分 {score(average(activeRows.map((row) => row.result?.latest)))}</p></div>
+      <div className="tc-chart-grid">
+        <section className="tc-panel"><div className="tc-chart-heading"><div><span>分数分布</span><h3>第 {lesson} 课 · 成绩分布</h3><p>只统计已提交的学生。</p></div></div><ScoreDistribution scores={scoreRows.map((row) => row.result?.latest)} /></section>
+        <section className="tc-panel"><div className="tc-chart-heading"><div><span>班级对比</span><h3>各班最近均分</h3><p>按班级名称排列，可查看参与人数。</p></div></div><ClassScoreBars rows={classRows} /></section>
+      </div>
+
+      {chartStudent && <section id="tc-student-trend" className="tc-panel tc-student-trend">
+        <div className="tc-chart-heading"><div><span>个人成长轨迹</span><h3>{chartStudent.name} · 三课变化</h3><p>{chartStudent.className} · 只连接有成绩的课次</p></div><button type="button" onClick={() => setChartStudentId('')}>收起图表</button></div>
+        <CourseTrendChart points={studentTrend} label={`${chartStudent.name}在Unit ${unit}的成绩变化`} />
+        <button className="tc-full-profile" type="button" onClick={() => onStudent(chartStudent.id)}>查看自评雷达、录音和完整档案 <ArrowRight /></button>
+      </section>}
+
+      <div className="tc-detail-heading"><div><span>本课明细</span><h2>Unit {unit} · 第 {lesson} 课</h2></div><p>{activeRows.length} 人有成绩 · 最近均分 {score(average(activeRows.map((row) => row.result?.latest)))}</p></div>
       <div className="tc-split">
         <section className="tc-panel">
           <h3><ClipboardList /> 本课任务 <span>{selectedTasks.length} 项</span></h3>
@@ -173,7 +219,7 @@ export function TeacherCourseScores({
       <section className="tc-panel tc-student-panel">
         <div className="tc-table-heading"><div><h3>学生成绩</h3><p>点击学生，可看个人任务原文、录音与历史。</p></div><label><input type="checkbox" checked={showAll} onChange={(event) => setShowAll(event.target.checked)} />显示未提交学生（{students.length - activeRows.length}人）</label></div>
         {displayRows.length ? <div className="tc-table-wrap"><table><thead><tr><th>学生 / 班级</th><th>首次均分</th><th>最近均分</th><th>最好均分</th><th>复练变化</th><th>已得分任务</th><th>个人档案</th></tr></thead><tbody>
-          {pageRows.map(({ student, result }) => <tr key={student.id}><td><strong>{student.name}</strong><small>{student.className}</small></td><td>{score(result?.first)}</td><td className="tc-score-strong">{score(result?.latest)}</td><td>{score(result?.best)}</td><td>{change(result?.change)}</td><td>{result?.items.length || 0} 项</td><td><button type="button" onClick={() => onStudent(student.id)}>查看详情 <ArrowRight /></button></td></tr>)}
+          {pageRows.map(({ student, result }) => <tr key={student.id}><td><strong>{student.name}</strong><small>{student.className}</small></td><td>{score(result?.first)}</td><td className="tc-score-strong">{score(result?.latest)}</td><td>{score(result?.best)}</td><td>{change(result?.change)}</td><td>{result?.items.length || 0} 项</td><td><button type="button" onClick={() => setChartStudentId(student.id)}>看变化</button><button type="button" onClick={() => onStudent(student.id)}>查看档案 <ArrowRight /></button></td></tr>)}
         </tbody></table></div> : <p className="tc-empty">当前筛选范围内，这节课还没有正式成绩。可勾选右上角查看未提交学生。</p>}
         {displayRows.length > 20 && <div className="tc-pagination"><span>第 {Math.min(page, pageCount)} / {pageCount} 页</span><button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页</button><button type="button" disabled={page >= pageCount} onClick={() => setPage(page + 1)}>下一页</button></div>}
       </section>

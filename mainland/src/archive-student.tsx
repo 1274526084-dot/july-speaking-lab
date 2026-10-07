@@ -43,6 +43,7 @@ import {
 } from './course-session';
 import { Unit2Panel } from './unit2-panel';
 import { CourseBoard } from './course-board';
+import { CourseTrendChart } from './course-charts';
 
 const skillKeys = Object.keys(SKILL_LABELS) as Array<keyof typeof SKILL_LABELS>;
 const date = (value?: number | null) =>
@@ -848,6 +849,15 @@ export function ArchiveStudent() {
           )}
           {tab === 'path' && (
             <>
+              <section className="archive-card archive-course-trend">
+                <div className="archive-section-heading"><div><span className="archive-eyebrow">MY LEARNING CURVE</span><h2>我的每课变化</h2><p>首次与最近成绩并排看；还没交的课次不算0分。</p></div></div>
+                <CourseTrendChart
+                  label={`${data.student.name}的每课成绩变化`}
+                  points={[...(data.courseProgress?.lessons || [])]
+                    .sort((a, b) => a.unit - b.unit || a.lesson - b.lesson)
+                    .map((row) => ({ label: `${row.unit}-${row.lesson}`, first: row.first, latest: row.latest }))}
+                />
+              </section>
               <CourseBoard
                 tasks={tasks}
                 progress={data.courseProgress}

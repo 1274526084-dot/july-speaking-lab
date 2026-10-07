@@ -163,3 +163,41 @@
   .tc-panel, .tc-student-panel { padding: 18px; }
   .tc-table-heading label { white-space: normal; }
 }
+
+/* Data-first course dashboard: charts sit above the detailed score table. */
+.tc-overview { padding: 26px 32px; border: 1px solid #d8e5dc; background: linear-gradient(115deg, #fffefa, #ebf4ee); box-shadow: 0 12px 34px #1b514015; color: #174438; }
+.tc-overview::after { border-top-color: #d6a36e66; }
+.tc-overview-heading > span { color: #b56e42; }
+.tc-overview-heading h2 { font-size: clamp(27px, 2vw, 35px); }
+.tc-overview-heading p { color: #557266; }
+.tc-overview-stats > div { min-height: 112px; padding: 15px 19px; border-color: #d9e8dc; background: #fffefae8; backdrop-filter: none; }
+.tc-overview-stats svg { color: #b97442; }
+.tc-overview-stats span { color: #577164; }
+.tc-overview-stats strong { color: #1c5b46; }
+.tc-main-trend { display: grid; grid-template-columns: minmax(220px, .38fr) minmax(0, 1fr); align-items: center; gap: 24px; padding: 25px 30px; }
+.tc-main-trend .tc-chart-heading { display: block; }
+.tc-main-trend .tc-chart-heading > strong { display: inline-flex; margin-top: 17px; }
+.tc-chart-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; margin-bottom: 10px; }
+.tc-chart-heading span { color: #bd7445; font-size: 12px; font-weight: 850; letter-spacing: .16em; }
+.tc-chart-heading h3 { margin: 4px 0; color: #174838; font-size: clamp(21px, 1.6vw, 27px); line-height: 1.25; }
+.tc-chart-heading p { margin: 0; color: #6a8073; font-size: 14px; }
+.tc-chart-heading > strong { padding: 8px 12px; border-radius: 999px; background: #e4f1e8; color: #26664f; font-size: 14px; white-space: nowrap; }
+.tc-chart-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 18px; }
+.tc-chart-grid .tc-panel { padding: 23px 25px; }
+.tc-chart-grid .tc-chart-heading { margin-bottom: 25px; }
+.tc-student-trend { border-color: #b9d9c8; background: #f8fcf8; }
+.tc-student-trend .tc-chart-heading button { border: 0; background: transparent; color: #40735b; font-weight: 750; white-space: nowrap; }
+.tc-full-profile { display: inline-flex; align-items: center; gap: 8px; margin-top: 9px; padding: 11px 15px; border: 0; border-radius: 11px; background: #1e674e; color: white; font-size: 14px; font-weight: 750; }
+.tc-full-profile svg { width: 16px; height: 16px; }
+.tc-table-wrap td:last-child { display: flex; align-items: center; gap: 12px; }
+.tc-scores { font-size: 16px; }
+.tc-overview-heading h2, .tc-unit-heading h2, .tc-detail-heading h2, .tc-chart-heading h3 { font-weight: 680; letter-spacing: -.02em; }
+.tc-overview-heading p, .tc-chart-heading p, .tc-table-heading p { font-size: 15px; line-height: 1.55; }
+.tc-unit-heading > div > span, .tc-detail-heading > div > span, .tc-chart-heading span { letter-spacing: .07em; }
+.tc-panel { box-shadow: 0 10px 28px #1946380a; }
+@media (max-width: 1000px) { .tc-chart-grid, .tc-main-trend { grid-template-columns: 1fr; } }
+@media (max-width: 720px) {
+  .tc-overview { padding: 23px 20px; }
+  .tc-main-trend, .tc-chart-grid .tc-panel { padding: 20px 17px; }
+  .tc-chart-heading { flex-wrap: wrap; }
+}

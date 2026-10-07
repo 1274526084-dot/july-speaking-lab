@@ -226,7 +226,7 @@ export function TeacherWorkbench() {
       <div className="mx-auto max-w-6xl">
         <header className="relative flex flex-wrap items-center justify-between gap-4 overflow-hidden rounded-[26px] border border-[#d6e4d5] bg-gradient-to-r from-[#e8f3ec] via-[#fbfaf3] to-[#f6e9d8] p-5 shadow-[0_14px_36px_#254f3520] sm:p-7">
           <div className="flex items-center gap-4 sm:gap-6">
-            <img src={teacherPortrait(teacherName)} alt={`${teacherName}老师的卡通形象`} className="h-20 w-20 rounded-2xl border-2 border-white object-cover shadow-md sm:h-24 sm:w-24" />
+            <img src={teacherPortrait(teacherName)} alt={`${teacherName}老师的卡通形象`} className="h-24 w-24 object-cover mix-blend-multiply [mask-image:radial-gradient(ellipse_72%_76%_at_50%_45%,black_52%,transparent_100%)] sm:h-28 sm:w-28" />
             <div>
               <p className="text-xs font-bold tracking-widest text-[#90704b]">
                 {teacherName} · RAILWAY ENGLISH

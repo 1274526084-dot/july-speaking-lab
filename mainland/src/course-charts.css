@@ -1,0 +1,35 @@
+.cc-trend { margin: 0; min-width: 0; overflow-x: auto; }
+.cc-trend svg, .archive-teacher .cc-trend svg { display: block; width: min(100%, 720px); height: auto; max-height: none; margin-inline: auto; }
+.cc-axis { fill: #6d8177; font: 14px Arial, 'Microsoft YaHei', sans-serif; }
+.cc-x-label { font-size: 15px; font-weight: 700; }
+.cc-participants { font-size: 12px; }
+.cc-trend figcaption { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding: 0 15px 4px; color: #3b6253; font-size: 14px; }
+.cc-trend figcaption span { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; }
+.cc-trend figcaption small { color: #6b8175; font-size: 13px; }
+.cc-scroll-hint { display: none; }
+.cc-legend-dot { display: inline-block; width: 18px; height: 4px; border-radius: 4px; }
+.cc-legend-dot.latest { background: #20745b; }
+.cc-legend-dot.first { background: #dd9966; }
+.cc-chart-empty { margin: 0; padding: 42px 18px; border: 1px dashed #c8d9cf; border-radius: 15px; background: #f6faf6; color: #60776b; text-align: center; font-size: 15px; }
+.cc-bars { display: grid; gap: 14px; }
+.cc-bar-row { display: grid; grid-template-columns: 72px minmax(0, 1fr) 48px; gap: 12px; align-items: center; color: #345949; font-size: 15px; }
+.cc-bar-row strong { text-align: right; }
+.cc-bar-track, .cc-class-track { height: 12px; overflow: hidden; border-radius: 20px; background: #e9f0eb; }
+.cc-bar-track i, .cc-class-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #73ac91, #23735d); }
+.cc-bar-row:nth-child(4) i { background: #d9aa69; }
+.cc-bar-row:nth-child(5) i { background: #db8f6c; }
+.cc-bars > p { margin: 6px 0 0; color: #637a6d; font-size: 14px; }
+.cc-class-list { display: grid; gap: 16px; max-height: 420px; overflow: auto; padding-right: 7px; }
+.cc-class-row { display: grid; grid-template-columns: minmax(145px, 1.3fr) minmax(120px, 2fr) 76px; align-items: center; gap: 13px; }
+.cc-class-row strong { display: block; overflow-wrap: anywhere; font-size: 15px; }
+.cc-class-row small { color: #708277; font-size: 12px; }
+.cc-class-row b { white-space: nowrap; text-align: right; color: #236b55; font-size: 16px; }
+@media (max-width: 650px) {
+  .cc-trend svg, .archive-teacher .cc-trend svg { min-width: 500px; }
+  .cc-trend figcaption .cc-scroll-hint { display: block; flex-basis: 100%; }
+  .cc-trend figcaption { gap: 12px; padding-inline: 0; }
+  .cc-trend figcaption small { flex-basis: 100%; }
+  .cc-class-row { grid-template-columns: minmax(115px, 1.3fr) minmax(70px, 1fr) 62px; gap: 8px; }
+  .cc-class-row strong { font-size: 13px; }
+  .cc-class-row b { font-size: 13px; }
+}

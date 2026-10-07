@@ -8,3 +8,7 @@ export function teacherCode(value?: string | null): string {
 export function teacherPortrait(value?: string | null): string {
   return `${import.meta.env.BASE_URL}teachers/${teacherCode(value)}.webp`;
 }
+
+export function teacherBanner(value?: string | null): string {
+  return `${import.meta.env.BASE_URL}teachers/${teacherCode(value)}-banner.webp`;
+}

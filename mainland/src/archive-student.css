@@ -8,6 +8,9 @@
   color: var(--ink);
   font-family: Arial, 'Microsoft YaHei', sans-serif;
 }
+
+.archive-course-trend { margin-bottom: 22px; }
+.archive-course-trend .archive-section-heading { margin-bottom: 12px; }
 .archive-student * {
   box-sizing: border-box;
 }
