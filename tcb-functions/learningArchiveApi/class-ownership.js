@@ -1,0 +1,10 @@
+/* The named teaching assignments supplied by July. Other screenshot classes are
+ * intentionally unassigned rather than silently attributed to a teacher. */
+const DEFAULT_ASSIGNMENTS = Object.freeze({
+  july: ['26-储能技术01班', '26-城轨信号54班', '26-城轨信号53班', '26-机车125班', '26-机车124班'],
+  lisa: ['26-人工智能16班', '26-测量04班', '26-铁工85班', '26-铁工84班', '26-机车123班', '26-机车122班'],
+  alice: ['26-运营116班', '26-新能源汽车33班', '26-新能源汽车32班', '26-智控08班', '26-电气69班', '26-电气68班'],
+  cherie: ['26-无人机2班', '26-无人机1班', '26-酒店6班', '26-机电37班', '26-机电38班'],
+});
+const DISPLAY_NAMES = Object.freeze({ july: 'July · 罗钧霖', lisa: 'Lisa · 李思', alice: 'Alice · 汤爱丽', cherie: 'Cherie · 颜钰' });
+module.exports = { DEFAULT_ASSIGNMENTS, DISPLAY_NAMES };

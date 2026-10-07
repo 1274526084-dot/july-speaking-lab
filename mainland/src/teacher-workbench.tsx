@@ -15,6 +15,9 @@ import {
 import { CLASS_CATALOG } from '@/lib/class-catalog';
 import { ClassroomAccess } from './classroom-access';
 import {
+  archiveRequest,
+} from './archive-api';
+import {
   clearTeacherToken,
   cloudbaseRequest,
   getTeacherToken,
@@ -200,8 +203,14 @@ export function TeacherWorkbench() {
   const ready = Boolean(getTeacherToken() && getWordToken());
   const [editor, setEditor] = useState<EditableTask | null>(null);
   const [revision, setRevision] = useState(0);
+  const [teachingRole, setTeachingRole] = useState<{ assignedClasses: string[]; canManageCourse: boolean } | null>(null);
   useEffect(() => {
     if (!ready) location.replace(sitePath('workbench/login'));
+  }, [ready]);
+  useEffect(() => {
+    if (!ready) return;
+    void archiveRequest<{ assignedClasses: string[]; canManageCourse: boolean }>('teacherSession', {}, getTeacherToken())
+      .then(setTeachingRole).catch(() => setTeachingRole(null));
   }, [ready]);
   if (!ready) return null;
   function logout() {
@@ -236,6 +245,7 @@ export function TeacherWorkbench() {
         >
           {[
             { title: '班级档案', href: sitePath('archive/teacher') },
+            { title: '四师总览', href: sitePath('archive/teacher') + '?tab=overview' },
             { title: '单词与录音', href: wordPath('teacher') },
             { title: '口语与录音', href: sitePath('teacher') },
             { title: '学生学习入口', href: sitePath() },
@@ -301,7 +311,7 @@ export function TeacherWorkbench() {
         {editor && (
           <TaskComposer
             initial={editor}
-            classes={[...CLASS_CATALOG]}
+            classes={teachingRole?.canManageCourse ? [...CLASS_CATALOG] : teachingRole?.assignedClasses || []}
             onClose={() => setEditor(null)}
             onSaved={async () => {
               setEditor(null);

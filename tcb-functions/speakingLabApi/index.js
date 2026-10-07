@@ -1,5 +1,6 @@
 /* oxlint-disable typescript/no-require-imports */
 const cloudbase = require('@cloudbase/node-sdk');
+const { archiveClassAccess } = require('./archive-class-access');
 const { asr } = require('tencentcloud-sdk-nodejs-asr');
 const {
   createHash,
@@ -824,14 +825,22 @@ async function handleList(event, body) {
       ok: false,
       error: '登录已失效，请重新登录。',
     });
-  const result = await db
-    .collection(ATTEMPTS)
-    .orderBy('submitted_at', 'desc')
-    .limit(300)
-    .get();
-  const rows = Array.isArray(result.data) ? result.data.filter(belongsToProject) : [];
+  const access = await archiveClassAccess(db);
+  const scanned = [];
+  for (let offset = 0; offset < 3000; offset += 100) {
+    const result = await db.collection(ATTEMPTS).orderBy('submitted_at', 'desc').skip(offset).limit(100).get();
+    const batch = Array.isArray(result.data) ? result.data : [];
+    scanned.push(...batch);
+    if (batch.length < 100) break;
+  }
+  if (scanned.length >= 3000) return response(event, 409, { ok: false, error: '记录较多，当前列表未完整读取，请联系管理员。' });
+  const rows = scanned.filter(row => belongsToProject(row) && access.canSee(session.teacher_code, row, ATTEMPTS))
+    .map(row => ({ ...row, raw_class_name: row.class_name, class_name: access.className(row, ATTEMPTS) }));
+  const limit = Math.max(1, Math.min(30, Number(body.limit) || 30));
+  const offset = Math.max(0, Math.min(3000, Number(body.offset) || 0));
+  const page = rows.slice(offset, offset + limit);
   const fileIds = [];
-  const manifests = rows.map((row) => {
+  const manifests = page.map((row) => {
     try {
       const parsed = JSON.parse(row.audio_manifest || '[]');
       if (!Array.isArray(parsed)) return [];
@@ -842,7 +851,7 @@ async function handleList(event, body) {
     }
   });
   const urls = await temporaryUrlMap(fileIds);
-  const hydratedRows = rows.map((row, index) => ({
+  const hydratedRows = page.map((row, index) => ({
     ...row,
     audio_manifest: JSON.stringify(
       manifests[index].map((item) => ({
@@ -855,6 +864,9 @@ async function handleList(event, body) {
     ok: true,
     projectId: PROJECT_ID,
     teacherName: session.teacher_name,
+    total: rows.length,
+    offset,
+    limit,
     rows: hydratedRows,
   });
 }

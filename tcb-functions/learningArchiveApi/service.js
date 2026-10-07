@@ -1,7 +1,8 @@
 /* oxlint-disable typescript/no-require-imports */
 const { createHash, randomBytes, randomUUID, randomInt, timingSafeEqual } = require('node:crypto');
-const { createSchoolClassDirectory: createClassDirectory, projectSchoolRecord, CLASS_NORMALIZATION_VERSION } = require('./school-classes');
+const { createSchoolClassDirectory: createClassDirectory, projectSchoolRecord, normalizeSchoolClass, CLASS_NORMALIZATION_VERSION } = require('./school-classes');
 const { CLASS_CATALOG } = require('./class-catalog');
+const { DEFAULT_ASSIGNMENTS, DISPLAY_NAMES } = require('./class-ownership');
 const { gradeUnit2, unit2Summary } = require('./unit2');
 const { position, courseCatalog, lessonProgress } = require('./course');
 
@@ -26,6 +27,7 @@ const MAX_ROWS = 10000;
 const PAGE_SIZE = 1000;
 const PAGE_CONCURRENCY = 4;
 const AUDIO_SECONDS = 300;
+const ASSIGNMENTS_ID = 'teacher-assignments-2026';
 const ALLOWED_ORIGINS = new Set([
   'https://1274526084-dot.github.io', 'http://localhost:4173',
   'http://localhost:5173', 'http://localhost:5179',
@@ -115,7 +117,7 @@ function publicNews(row) {
 }
 function publicStudent(student) {
   const view = projectSchoolRecord({ ...student, student_name: student.name });
-  return { id: student.id, name: view.student_name, className: view.class_name, college: view.normalized_college, rawName: view.raw_student_name, rawClassName: view.raw_class_name };
+  return { id: student.id, name: view.student_name, className: view.class_name, college: view.normalized_college, rawName: view.raw_student_name, rawClassName: student.migration_raw_class_name || view.raw_class_name };
 }
 function publicRequest(row, now) {
   return { id: row.id, name: row.name, className: row.class_name, status: row.status === 'pending' && row.expires_at <= now ? 'expired' : row.status, createdAt: row.created_at, expiresAt: row.expires_at, approvedAt: row.approved_at || null, approvedBy: row.approved_by || null, studentId: row.student_id || null, practiceCount: row.practice_count || 0, practiceScores: Object.values(row.practice_scores || {}) };
@@ -220,6 +222,16 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     if (!session || session.auth_version !== 2 || !Number.isFinite(Number(session.expires_at)) || Number(session.expires_at) <= now() || !TEACHERS.has(session.teacher_code) || session.active === false || session.revoked_at || (session.project_id && !tagged(session))) fail(401, '教师登录已失效，请重新登录。');
     return { code: session.teacher_code, name: text(session.teacher_name, 60) || session.teacher_code };
   }
+  async function teachingAssignments() {
+    const stored = await get(COLLECTIONS.classNormalization, ASSIGNMENTS_ID);
+    return tagged(stored) && stored.kind === 'teacher-assignments' ? stored.assignments : DEFAULT_ASSIGNMENTS;
+  }
+  function teacherCanSee(staff, className, assignments) {
+    return staff.code === 'july' || (assignments[staff.code] || []).includes(normalizeSchoolClass(className));
+  }
+  function teacherView(staff, assignments) {
+    return { ...staff, assignedClasses: assignments[staff.code] || [], canManageCourse: staff.code === 'july' };
+  }
   async function studentSession(token, allowPractice = false) {
     if (!validToken(token)) fail(401, '此设备尚未获老师批准，或授权已失效。');
     let session = await get(COLLECTIONS.sessions, hash(token));
@@ -287,13 +299,24 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
   async function datasets() {
     const startedAt = Date.now();
     const names = ['profiles', 'words', 'speaking', 'students', 'reflections', 'submissions', 'tasks', 'news', 'unit2', 'practiceAttempts'];
-    const [result, wordUnits, approvedRequests] = await Promise.all([
+    const [result, wordUnits, approvedRequests, mappingScan] = await Promise.all([
       Promise.all(names.map(key => read(LEGACY[key] || COLLECTIONS[key], LEGACY[key] ? {} : { project_id: PROJECT_ID }, Boolean(LEGACY[key])))),
       read('word_units', {}, true),
       read(COLLECTIONS.requests, { project_id: PROJECT_ID, status: 'approved' }),
+      read(COLLECTIONS.classNormalization, { project_id: PROJECT_ID }),
     ]);
     const data = { hasMore: result.some(item => item.hasMore), incompleteCollections: names.filter((_, i) => result[i].hasMore), scans: Object.fromEntries(names.map((key, index) => [key, { scanned: result[index].rows.length, total: result[index].totalCount, pages: result[index].pages, elapsedMs: result[index].elapsedMs }])) };
-    names.forEach((key, index) => { data[key] = LEGACY[key] ? result[index].rows.filter(row => scoped(row, key) && (key !== 'words' || row.status === 'completed')).map(projectSchoolRecord) : result[index].rows.filter(tagged); });
+    const mapped = new Map(mappingScan.rows.filter(row => tagged(row) && row.kind === 'roster-reassignment').map(row => [`${row.source_collection}:${row.source_id}`, row]));
+    function rosterView(row, collection, isStudent = false) {
+      const view = isStudent ? row : projectSchoolRecord(row);
+      const mapping = mapped.get(`${collection}:${row.id || row._id}`);
+      if (!mapping || mapping.source_fingerprint !== hash(JSON.stringify(row)) || !CLASS_CATALOG.includes(mapping.class_name)) return view;
+      const old = projectSchoolRecord({ ...row, student_name: isStudent ? row.name : row.student_name });
+      if (old.class_name !== '默认班级（测试）' || normalizeName(old.student_name) !== mapping.identity_name) return view;
+      return { ...view, class_name: mapping.class_name, raw_class_name: mapping.class_name, migration_raw_class_name: old.raw_class_name, class_identity_name: mapping.class_name, class_key: createClassDirectory([], []).resolve({ class_name: mapping.class_name }).identityKey };
+    }
+    names.forEach((key, index) => { data[key] = LEGACY[key] ? result[index].rows.filter(row => scoped(row, key) && (key !== 'words' || row.status === 'completed')).map(row => rosterView(row, LEGACY[key])) : result[index].rows.filter(tagged).map(row => key === 'students' ? rosterView(row, COLLECTIONS.students, true) : row); });
+    if (mappingScan.hasMore) { data.hasMore = true; data.incompleteCollections.push('classNormalization'); }
     const approved = new Map(approvedRequests.rows.filter(tagged).map(row => [row.id, row.student_id]));
     const owners = new Set(data.students.map(student => student.id));
     // Never merge new unverified submissions by a public name/class label.
@@ -496,9 +519,10 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     if (!Array.isArray(vocabulary) || vocabulary.length > 30) fail(400, '词汇最多填写30项。');
     return { title: requiredText(news.title, '新闻标题', 200), summary: text(news.summary, 6000), url: safeUrl(news.url, true), source: requiredText(news.source, '新闻来源', 160), published_date: text(news.publishedDate, 40), vocabulary: vocabulary.map(item => ({ word: requiredText(item.word, '词汇', 100), meaning: requiredText(item.meaning, '释义', 500) })), question: text(news.question, 2000), status: news.status };
   }
-  async function saveOwned(kind, body, staff) {
+  async function saveOwned(kind, body, staff, assignments) {
     const value = body[kind === 'tasks' ? 'task' : 'news'];
     const clean = kind === 'tasks' ? validateTask(value) : validateNews(value);
+    if (kind === 'tasks' && staff.code !== 'july' && clean.classes.some(className => !teacherCanSee(staff, className, assignments))) fail(403, '只能向自己负责的班级布置任务。');
     const id = text(value?.id, 100) || `${kind === 'tasks' ? 'task' : 'news'}-${randomUUID()}`;
     const row = await db.runTransaction(async tx => {
       const existing = await get(COLLECTIONS[kind], id, tx);
@@ -642,14 +666,67 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       });
       return { pendingVerification: Boolean(auth.practice), submission: { id: submitted.id, taskId: submitted.task_id, taskVersion: submitted.task_version ?? submitted.task_updated_at, score: submitted.score, correct: submitted.correct, total: submitted.total, submittedAt: submitted.created_at, feedback: submitted.feedback }, score: submitted.score, feedback: submitted.feedback };
     }
-    const teacherActions = ['teacherDashboard', 'teacherStudent', 'listAccessRequests', 'approveAccess', 'rejectAccess', 'revokeDevice', 'saveTask', 'saveNews', 'teacherSession', 'normalizeClasses', 'courseFeed', 'saveCourseUnit', 'setCurrentLesson', 'teacherCourseScores'];
+    const teacherActions = ['teacherDashboard', 'teacherStudent', 'teacherOverview', 'listAccessRequests', 'approveAccess', 'rejectAccess', 'revokeDevice', 'saveTask', 'saveNews', 'teacherSession', 'normalizeClasses', 'adminClassAudit', 'adminClassMigration', 'saveTeacherAssignments', 'courseFeed', 'saveCourseUnit', 'setCurrentLesson', 'teacherCourseScores'];
     if (!teacherActions.includes(action)) fail(404, '未知操作。');
     const staff = await teacher(body.token);
     await rate(event, action, action === 'listAccessRequests' ? 1000 : action === 'approveAccess' ? 100 : 180, 15 * 60 * 1000, staff.code);
-    if (action === 'teacherSession') return { code: staff.code, name: staff.name };
+    const assignments = await teachingAssignments();
+    if (action === 'teacherSession') return teacherView(staff, assignments);
+    if (action === 'saveTeacherAssignments') {
+      if (staff.code !== 'july') fail(403, '仅 July 可以调整课程班级分工。');
+      const candidate = body.assignments;
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || Object.keys(candidate).sort().join(',') !== [...TEACHERS].sort().join(',')) fail(400, '请提供四位老师的完整班级分工。');
+      const seen = new Set(); const cleaned = {};
+      for (const code of TEACHERS) {
+        if (!Array.isArray(candidate[code]) || candidate[code].length > CLASS_CATALOG.length) fail(400, '班级分工格式不正确。');
+        cleaned[code] = candidate[code].map(label => normalizeSchoolClass(label));
+        for (const label of cleaned[code]) {
+          if (!CLASS_CATALOG.includes(label) || label === '默认班级（测试）' || seen.has(label)) fail(400, '班级不存在或已分配给另一位老师。');
+          seen.add(label);
+        }
+      }
+      await put(COLLECTIONS.classNormalization, ASSIGNMENTS_ID, { id: ASSIGNMENTS_ID, project_id: PROJECT_ID, kind: 'teacher-assignments', assignments: cleaned, updated_by: staff.code, updated_at: now() });
+      return { assignments: cleaned };
+    }
+    if (action === 'adminClassAudit' || action === 'adminClassMigration') {
+      if (staff.code !== 'july') fail(403, '仅 July 可以核对和迁移默认班级。');
+      if (action === 'adminClassAudit') {
+        const specs = [...Object.entries(LEGACY).map(([kind, collection]) => ({ kind, collection })), { kind: 'students', collection: COLLECTIONS.students }];
+        const scans = await Promise.all(specs.map(spec => read(spec.collection, spec.kind === 'students' ? { project_id: PROJECT_ID } : {}, spec.kind !== 'students')));
+        if (scans.some(scan => scan.hasMore)) fail(409, '原始记录读取不完整，暂停迁移。');
+        const rows = [];
+        scans.forEach((scan, index) => scan.rows.forEach(row => {
+          const { kind, collection } = specs[index];
+          if (kind === 'students' ? !tagged(row) : !scoped(row, kind) || (kind === 'words' && row.status !== 'completed')) return;
+          const view = projectSchoolRecord({ ...row, student_name: kind === 'students' ? row.name : row.student_name });
+          if (view.class_name !== '默认班级（测试）') return;
+          rows.push({ sourceCollection: collection, sourceId: row.id || row._id, name: view.student_name, rawName: view.raw_student_name, rawClass: view.raw_class_name, major: text(row.major, 100), studentNumber: kind === 'speaking' ? text(row.student_id, 60) : '', fingerprint: hash(JSON.stringify(row)) });
+        }));
+        const offset = Math.max(0, Number(body.offset) || 0);
+        return { total: rows.length, rows: rows.slice(offset, offset + 200), hasMore: offset + 200 < rows.length };
+      }
+      if (!Array.isArray(body.mappings) || !body.mappings.length || body.mappings.length > 30) fail(400, '每次最多迁移30条核对过的记录。');
+      const prepared = [];
+      for (const item of body.mappings) {
+        const sourceCollection = text(item.sourceCollection, 100), sourceId = text(item.sourceId, 120);
+        if (![...Object.values(LEGACY), COLLECTIONS.students].includes(sourceCollection) || !sourceId) fail(400, '原始记录编号不正确。');
+        const raw = await get(sourceCollection, sourceId);
+        const kind = Object.entries(LEGACY).find(([, collection]) => collection === sourceCollection)?.[0] || 'students';
+        if (!raw || (kind === 'students' ? !tagged(raw) : !scoped(raw, kind)) || (kind === 'words' && raw.status !== 'completed')) fail(409, '原始记录已变化，未迁移。');
+        const view = projectSchoolRecord({ ...raw, student_name: kind === 'students' ? raw.name : raw.student_name });
+        const target = normalizeSchoolClass(item.className);
+        if (hash(JSON.stringify(raw)) !== item.fingerprint || view.class_name !== '默认班级（测试）' || normalizeName(view.student_name) !== normalizeName(item.name) || !CLASS_CATALOG.includes(target) || target === '默认班级（测试）') fail(409, '记录与预览不符，未迁移。');
+        const id = `roster-map-${hash(`${PROJECT_ID}|${sourceCollection}|${sourceId}`).slice(0, 48)}`;
+        const existing = await get(COLLECTIONS.classNormalization, id);
+        if (existing && (existing.source_fingerprint !== item.fingerprint || existing.class_name !== target)) fail(409, '这条记录已有不同的归班结果，请由 July 核对。');
+        prepared.push({ id, project_id: PROJECT_ID, kind: 'roster-reassignment', source_collection: sourceCollection, source_id: sourceId, source_fingerprint: item.fingerprint, identity_name: normalizeName(view.student_name), raw_student_name: view.raw_student_name, raw_class_name: view.raw_class_name, class_name: target, evidence: '2026级新生报到名单.xls:unique-name', normalized_by: staff.code, updated_at: now() });
+      }
+      if (body.commit === true) for (const row of prepared) await put(COLLECTIONS.classNormalization, row.id, row);
+      return { committed: body.commit === true, count: prepared.length, originalCollectionsModified: false };
+    }
     if (action === 'courseFeed') {
       const [courses, tasks] = await Promise.all([read(COLLECTIONS.courseUnits, { project_id: PROJECT_ID }), read(COLLECTIONS.tasks, { project_id: PROJECT_ID })]);
-      return { teacher: staff, ...courseCatalog(courses.rows, tasks.rows), tasks: tasks.rows.map(row => publicTask(row, true)), hasMore: courses.hasMore || tasks.hasMore };
+      return { teacher: teacherView(staff, assignments), ...courseCatalog(courses.rows, tasks.rows), tasks: tasks.rows.map(row => publicTask(row, true)), hasMore: courses.hasMore || tasks.hasMore };
     }
     if (action === 'saveCourseUnit') {
       if (!Number.isInteger(body.number) || body.number < 1 || body.number > 30) fail(400, '单元编号须为1–30。');
@@ -663,6 +740,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       return { unit: courseCatalog([unit]).units.find(item => item.number === body.number) };
     }
     if (action === 'setCurrentLesson') {
+      if (staff.code !== 'july') fail(403, '课程当前课次仅由 July 调整。');
       const at = position(body.unit, body.lesson);
       if (!at) fail(400, '请选择有效单元及第1–3课。');
       if (at.unit !== 1 && !tagged(await get(COLLECTIONS.courseUnits, `course-unit-${at.unit}`))) fail(400, '请先创建这个单元。');
@@ -695,8 +773,8 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       }
       return { committed: body.commit === true, version: CLASS_NORMALIZATION_VERSION, records: pending.length, counts, originalCollectionsModified: false };
     }
-    if (action === 'saveTask') return saveOwned('tasks', body, staff);
-    if (action === 'saveNews') return saveOwned('news', body, staff);
+    if (action === 'saveTask') return saveOwned('tasks', body, staff, assignments);
+    if (action === 'saveNews') return saveOwned('news', body, staff, assignments);
     if (action === 'listAccessRequests') {
       const requests = await read(COLLECTIONS.requests, { project_id: PROJECT_ID, ...(body.pendingOnly === true ? { status: 'pending' } : {}) });
       const evidence = await Promise.all(['words', 'speaking', 'profiles'].map(kind => read(LEGACY[kind], { project_id: PROJECT_ID, archive_binding: 'pending' }, true)));
@@ -707,13 +785,15 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
         list.push({ title: index === 0 ? row.unit_title : index === 1 ? row.scene_title : '学情调查（自评）', score: index === 0 ? score(row.average_score) : index === 1 ? score(row.total_score) : null, submittedAt: timestamp(row) });
         summaries.set(row.archive_request_id, list);
       }));
-      return { requests: requests.rows.map(row => { const extra = summaries.get(row.id) || []; const view = publicRequest(row, now()); return { ...view, practiceCount: view.practiceCount + extra.length, practiceScores: [...view.practiceScores, ...extra] }; }).filter(row => body.pendingOnly !== true || row.status === 'pending').sort((a, b) => b.createdAt - a.createdAt), hasMore: requests.hasMore || evidence.some(scan => scan.hasMore) };
+      return { requests: requests.rows.map(row => { const extra = summaries.get(row.id) || []; const view = publicRequest(row, now()); return { ...view, practiceCount: view.practiceCount + extra.length, practiceScores: [...view.practiceScores, ...extra] }; }).filter(row => teacherCanSee(staff, row.className, assignments) && (body.pendingOnly !== true || row.status === 'pending')).sort((a, b) => b.createdAt - a.createdAt), hasMore: requests.hasMore || evidence.some(scan => scan.hasMore) };
     }
     if (action === 'revokeDevice') {
       const id = requiredText(body.sessionId, '设备编号', 100);
       await db.runTransaction(async tx => {
         const session = await get(COLLECTIONS.sessions, id, tx);
         if (!tagged(session)) fail(404, '没有找到这台设备的授权。');
+        const owner = await get(COLLECTIONS.students, session.student_id, tx);
+        if (!tagged(owner) || !teacherCanSee(staff, owner.class_name, assignments)) fail(403, '只能管理自己班级的学生设备。');
         await put(COLLECTIONS.sessions, id, { ...session, revoked_at: now(), revoked_by: staff.code }, tx);
       });
       return {};
@@ -723,6 +803,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       await db.runTransaction(async tx => {
         const request = await get(COLLECTIONS.requests, id, tx);
         if (!tagged(request) || request.status !== 'pending') fail(409, '该申请不存在或已处理。');
+        if (!teacherCanSee(staff, request.class_name, assignments)) fail(403, '只能处理自己班级的申请。');
         await put(COLLECTIONS.requests, id, { ...request, status: 'rejected', rejected_at: now(), rejected_by: staff.code }, tx);
       });
       return {};
@@ -732,11 +813,23 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       datasets(), action === 'teacherDashboard' ? read(COLLECTIONS.requests, { project_id: PROJECT_ID }) : Promise.resolve(null),
     ]);
     const students = allStudents(data);
-    if (action === 'teacherCourseScores') return { students: [...students.values()].map(student => ({ ...publicStudent(student), courseProgress: courseProgressFor(student, data) })), hasMore: data.hasMore };
+    const ownStudents = [...students.values()].filter(student => teacherCanSee(staff, publicStudent(student).className, assignments));
+    if (action === 'teacherOverview') {
+      const summary = Object.entries(assignments).map(([code, classes]) => {
+        const groups = classes.map(className => {
+          const rows = [...students.values()].filter(student => publicStudent(student).className === className);
+          const scores = rows.map(student => studentSummary(student, data, false));
+          return { className, studentCount: rows.length, activeCount: scores.filter(row => row.historyCount > 0).length, wordAverage: mean(scores.map(row => ({ score: row.wordAverage }))), speakingAverage: mean(scores.map(row => ({ score: row.speakingAverage }))), quizAverage: mean(scores.map(row => ({ score: row.quizAverage }))) };
+        });
+        return { code, name: DISPLAY_NAMES[code], classes: groups, studentCount: groups.reduce((sum, row) => sum + row.studentCount, 0) };
+      });
+      return { teachers: summary, unassignedClassCount: CLASS_CATALOG.filter(label => label !== '默认班级（测试）' && !Object.values(assignments).some(list => list.includes(label))).length, hasMore: data.hasMore, canEdit: staff.code === 'july', assignments };
+    }
+    if (action === 'teacherCourseScores') return { students: ownStudents.map(student => ({ ...publicStudent(student), courseProgress: courseProgressFor(student, data) })), hasMore: data.hasMore };
     if (action === 'teacherDashboard') {
       const requests = requestScan;
       const includeProfiles = staff.code === 'july';
-      const result = { teacher: staff, students: [...students.values()].map(student => ({ ...publicStudent(student), ambiguous: Boolean(student.ambiguous), identityConflict: identityConflict(student, data), profile: includeProfiles ? publicProfile(profileFor(student, data)) : null, profileRestricted: !includeProfiles, ...studentSummary(student, data, includeProfiles) })).sort((a, b) => b.lastActive - a.lastActive || a.className.localeCompare(b.className, 'zh-CN')), tasks: data.tasks.map(row => publicTask(row, true)).sort((a, b) => b.updatedAt - a.updatedAt), news: data.news.map(publicNews).sort((a, b) => b.updatedAt - a.updatedAt), requests: requests.rows.map(row => publicRequest(row, now())).sort((a, b) => b.createdAt - a.createdAt), profileRestricted: !includeProfiles, hasMore: data.hasMore || requests.hasMore, warnings: data.hasMore || requests.hasMore ? ['记录数量超过本次读取上限，显示结果可能不完整，请联系管理员分批导出。'] : [] };
+      const result = { teacher: teacherView(staff, assignments), students: ownStudents.map(student => ({ ...publicStudent(student), ambiguous: Boolean(student.ambiguous), identityConflict: identityConflict(student, data), profile: includeProfiles ? publicProfile(profileFor(student, data)) : null, profileRestricted: !includeProfiles, ...studentSummary(student, data, includeProfiles) })).sort((a, b) => b.lastActive - a.lastActive || a.className.localeCompare(b.className, 'zh-CN')), tasks: data.tasks.map(row => publicTask(row, true)).sort((a, b) => b.updatedAt - a.updatedAt), news: data.news.map(publicNews).sort((a, b) => b.updatedAt - a.updatedAt), requests: requests.rows.filter(row => teacherCanSee(staff, row.class_name, assignments)).map(row => publicRequest(row, now())).sort((a, b) => b.createdAt - a.createdAt), profileRestricted: !includeProfiles, hasMore: data.hasMore || requests.hasMore, warnings: data.hasMore || requests.hasMore ? ['记录数量超过本次读取上限，显示结果可能不完整，请联系管理员分批导出。'] : [] };
       result.returnedRecordCounts = { ...Object.fromEntries(Object.keys(data.scans).map(key => [key, data[key].length])), requests: requests.rows.length };
       result.scannedRecordCounts = { ...Object.fromEntries(Object.entries(data.scans).map(([key, value]) => [key, value.scanned])), requests: requests.rows.length };
       result.collectionTotals = { ...Object.fromEntries(Object.entries(data.scans).map(([key, value]) => [key, value.total])), requests: requests.totalCount };
@@ -748,6 +841,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     if (action === 'teacherStudent') {
       const student = students.get(text(body.studentId, 100));
       if (!student) fail(404, '没有找到该学生。');
+      if (!teacherCanSee(staff, publicStudent(student).className, assignments)) fail(403, '只能查看自己班级的学生档案。');
       return dashboard(student, data, staff.code === 'july', true);
     }
     // Authenticated teachers may confirm a visible classroom applicant directly.
@@ -763,11 +857,13 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     }
     const request = await get(COLLECTIONS.requests, requestId);
     if (!tagged(request) || request.status !== 'pending' || request.expires_at <= now()) fail(409, '此申请已处理或已过期。');
+    if (!teacherCanSee(staff, request.class_name, assignments)) fail(403, '只能确认自己班级的学生。');
     if (!classroomApproval && !equalHash(request.verification_hash, hash(`${requestId}|${verificationCode}`))) fail(400, '验证码不匹配，请在学生设备上重新核对。');
     const name = body.name ? requiredText(body.name, '姓名', 60) : request.name;
     const className = body.className ? requiredText(body.className, '完整班级', 100) : request.class_name;
     if (normalizeName(name) !== normalizeName(request.name)) fail(400, '核验姓名与申请不一致，请让学生重新申请。');
     const group = data.directory.resolve({ class_name: className });
+    if (!teacherCanSee(staff, group.label, assignments)) fail(403, '只能确认自己班级的学生。');
     if (group.ambiguous || !group.key.startsWith('class:') || group.key.split(':')[2] === '*') fail(400, '班级身份不明确，请核对并填写完整的年级、专业和班号。');
     let student = body.studentId ? students.get(text(body.studentId, 100)) : students.get(candidateId(group.key, name));
     if (body.studentId && !student) fail(404, '选择的学生档案不存在。');

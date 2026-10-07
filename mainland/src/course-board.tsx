@@ -47,6 +47,7 @@ export type CourseProgress = {
   unassignedWordCount: number;
 };
 type CourseFeed = {
+  teacher?: { code: string; canManageCourse?: boolean };
   units: Unit[];
   current: { unit: number; lesson: number };
   tasks: ArchiveTask[];
@@ -525,13 +526,13 @@ export function CourseBoard({
               成绩与进步
             </button>
           </div>
-          <button
+          {feed.teacher?.canManageCourse && <button
             className="course-current-button"
             disabled={saving}
             onClick={() => void setCurrent()}
           >
             设为学生当前课
-          </button>
+          </button>}
         </div>
       )}
       {!teacher && <LessonProgress result={selectedResult} />}

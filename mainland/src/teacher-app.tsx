@@ -84,6 +84,8 @@ function Metric({
 
 export function TeacherApp() {
   const [rows, setRows] = useState<AttemptRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [classKeyword, setClassKeyword] = useState('');
@@ -97,23 +99,29 @@ export function TeacherApp() {
       window.location.replace(sitePath('teacher/login'));
       return;
     }
-    void cloudbaseRequest<{ rows: AttemptRow[]; teacherName?: string }>(
+    setLoading(true);
+    void cloudbaseRequest<{ rows: AttemptRow[]; total: number; teacherName?: string }>(
       'list',
-      {},
+      { offset: page * 30, limit: 30 },
       token,
     )
       .then((payload) => {
         if (!payload) return;
         setRows(payload.rows || []);
+        setTotal(payload.total || 0);
         setTeacherName(payload.teacherName || '');
       })
-      .catch(() => {
-        setError('登录已失效，正在返回登录页。');
-        clearTeacherToken();
-        window.location.replace(sitePath('teacher/login'));
+      .catch((requestError) => {
+        const message = requestError instanceof Error ? requestError.message : '学生数据加载失败。';
+        if (message.includes('登录已失效')) {
+          clearTeacherToken();
+          window.location.replace(sitePath('teacher/login'));
+        } else {
+          setError(message);
+        }
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [page]);
 
   const classDirectory = useMemo(() => createClassDirectory(rows, CLASS_CATALOG.map(class_name => ({ class_name }))), [rows]);
   const classGroups = classDirectory.groups;
@@ -215,7 +223,7 @@ export function TeacherApp() {
           <div>
             <p className="text-xs font-black uppercase tracking-[.16em] text-[#416b36]">
               {teacherName
-                ? `${teacherName} · 全部班级共享`
+                ? `${teacherName} · 负责班级数据`
                 : 'July English Lab'}
             </p>
             <h1 className="serif text-2xl font-bold text-[#d94f08]">
@@ -270,9 +278,9 @@ export function TeacherApp() {
           <div className="border-b border-[#eee0d4] px-5 py-4">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
-                <h2 className="font-bold">最近300条记录</h2>
+                <h2 className="font-bold">口语练习记录</h2>
                 <p className="mt-1 text-sm text-[#7a7168]">
-                  点击每轮录音即可回听；评分为任务型学习反馈，不是专业语音测评。
+                  共 {total} 条；当前页可筛选、导出和回听录音。评分为任务型学习反馈，不是专业语音测评。
                 </p>
               </div>
               <p
@@ -333,6 +341,11 @@ export function TeacherApp() {
               </div>
             </div>
             <ClassGroupingNote groups={classGroups} />
+            <div className="mt-4 flex items-center justify-end gap-3 text-sm text-[#687168]">
+              <span>第 {page + 1} / {Math.max(1, Math.ceil(total / 30))} 页</span>
+              <button type="button" disabled={page === 0} onClick={() => setPage(page - 1)} className="focus-ring rounded-xl border px-3 py-2 disabled:opacity-40">上一页</button>
+              <button type="button" disabled={(page + 1) * 30 >= total} onClick={() => setPage(page + 1)} className="focus-ring rounded-xl border px-3 py-2 disabled:opacity-40">下一页</button>
+            </div>
           </div>
 
           {loading && (

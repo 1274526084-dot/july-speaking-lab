@@ -139,7 +139,7 @@ function StaffLogin({ mode }: { mode: 'teacher' | 'admin' }) {
           <p className="mt-3 text-indigo-100">
             {mode === 'admin'
               ? '管理教师账号并查看全部教学数据'
-              : '智能生成词典发音，查看全部班级练习数据'}
+              : '智能生成词典发音，查看自己负责班级的练习数据'}
           </p>
         </div>
         <form onSubmit={submit} className="space-y-5 p-7">
@@ -984,12 +984,28 @@ function SharedLibrary({
   );
 }
 
+function AttemptPager({ page, total, onPage }: { page: number; total: number; onPage: (page: number) => void }) {
+  const pages = Math.max(1, Math.ceil(total / 30));
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
+      <span>共 {total} 条记录 · 第 {Math.min(page + 1, pages)} / {pages} 页（筛选、统计及导出以本页为准）</span>
+      <div className="flex gap-2">
+        <button type="button" className="word-secondary" disabled={page === 0} onClick={() => onPage(page - 1)}>上一页</button>
+        <button type="button" className="word-secondary" disabled={page + 1 >= pages} onClick={() => onPage(page + 1)}>下一页</button>
+      </div>
+    </div>
+  );
+}
+
 function TeacherApp() {
   const [name, setName] = useState('教师');
   const [tab, setTab] = useState<'units' | 'shared' | 'data'>('units');
   const [units, setUnits] = useState<UnitRow[]>([]);
   const [sharedUnits, setSharedUnits] = useState<SharedUnitRow[]>([]);
   const [attempts, setAttempts] = useState<WordAttempt[]>([]);
+  const [attemptTotal, setAttemptTotal] = useState(0);
+  const [attemptPage, setAttemptPage] = useState(0);
+  const [attemptLoading, setAttemptLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<UnitRow | null | 'new'>(null);
   const [expanded, setExpanded] = useState('');
@@ -1004,7 +1020,7 @@ function TeacherApp() {
         getWordToken(),
       );
       setName(session.name);
-      const [unitData, sharedData, attemptData] = await Promise.all([
+      const [unitData, sharedData] = await Promise.all([
         wordRequest<{ rows: UnitRow[] }>(
           'teacherListUnits',
           {},
@@ -1015,18 +1031,11 @@ function TeacherApp() {
           {},
           getWordToken(),
         ),
-        wordRequest<{ rows: WordAttempt[] }>(
-          'listAttempts',
-          {},
-          getWordToken(),
-        ),
       ]);
       setUnits(unitData.rows || []);
       setSharedUnits(sharedData.rows || []);
-      setAttempts(attemptData.rows || []);
-    } catch {
-      clearWordSession();
-      window.location.reload();
+    } catch (requestError) {
+      setNotice(requestError instanceof Error ? requestError.message : '数据加载失败，请重试。');
     } finally {
       setLoading(false);
     }
@@ -1034,6 +1043,23 @@ function TeacherApp() {
   useEffect(() => {
     void load();
   }, []);
+  useEffect(() => {
+    if (tab !== 'data') return;
+    let active = true;
+    setAttemptLoading(true);
+    setAttempts([]);
+    void wordRequest<{ rows: WordAttempt[]; total: number }>('listAttempts', { offset: attemptPage * 30, limit: 30 }, getWordToken())
+      .then((result) => {
+        if (!active) return;
+        setAttempts(result.rows || []);
+        setAttemptTotal(result.total || 0);
+      })
+      .catch((requestError) => {
+        if (active) setNotice(requestError instanceof Error ? requestError.message : '数据加载失败，请重试。');
+      })
+      .finally(() => { if (active) setAttemptLoading(false); });
+    return () => { active = false; };
+  }, [tab, attemptPage]);
   async function publish(unit: UnitRow) {
     setNotice('');
     try {
@@ -1257,7 +1283,8 @@ function TeacherApp() {
         {!loading && tab === 'data' && (
           <div className="mt-5">
             <div className="word-card mt-5 p-5">
-              <AttemptsTable rows={attempts} showTeacher />
+              <AttemptPager page={attemptPage} total={attemptTotal} onPage={setAttemptPage} />
+              {attemptLoading ? <p className="py-10 text-center text-slate-500">正在读取本页练习与录音…</p> : <AttemptsTable rows={attempts} showTeacher />}
             </div>
           </div>
         )}
@@ -1270,6 +1297,9 @@ function TeacherApp() {
 function AdminApp() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [attempts, setAttempts] = useState<WordAttempt[]>([]);
+  const [attemptTotal, setAttemptTotal] = useState(0);
+  const [attemptPage, setAttemptPage] = useState(0);
+  const [attemptLoading, setAttemptLoading] = useState(false);
   const [tab, setTab] = useState<'teachers' | 'data'>('teachers');
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
@@ -1280,23 +1310,10 @@ function AdminApp() {
     setLoading(true);
     try {
       await wordRequest('session', {}, getWordToken());
-      const [teacherData, attemptData] = await Promise.all([
-        wordRequest<{ rows: Teacher[] }>(
-          'adminListTeachers',
-          {},
-          getWordToken(),
-        ),
-        wordRequest<{ rows: WordAttempt[] }>(
-          'listAttempts',
-          {},
-          getWordToken(),
-        ),
-      ]);
+      const teacherData = await wordRequest<{ rows: Teacher[] }>('adminListTeachers', {}, getWordToken());
       setTeachers(teacherData.rows || []);
-      setAttempts(attemptData.rows || []);
-    } catch {
-      clearWordSession();
-      window.location.reload();
+    } catch (requestError) {
+      setNotice(requestError instanceof Error ? requestError.message : '数据加载失败，请重试。');
     } finally {
       setLoading(false);
     }
@@ -1304,6 +1321,23 @@ function AdminApp() {
   useEffect(() => {
     void load();
   }, []);
+  useEffect(() => {
+    if (tab !== 'data') return;
+    let active = true;
+    setAttemptLoading(true);
+    setAttempts([]);
+    void wordRequest<{ rows: WordAttempt[]; total: number }>('listAttempts', { offset: attemptPage * 30, limit: 30 }, getWordToken())
+      .then((result) => {
+        if (!active) return;
+        setAttempts(result.rows || []);
+        setAttemptTotal(result.total || 0);
+      })
+      .catch((requestError) => {
+        if (active) setNotice(requestError instanceof Error ? requestError.message : '数据加载失败，请重试。');
+      })
+      .finally(() => { if (active) setAttemptLoading(false); });
+    return () => { active = false; };
+  }, [tab, attemptPage]);
   async function create(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setNotice('');
@@ -1474,7 +1508,8 @@ function AdminApp() {
         ) : (
           <div className="mt-5">
             <div className="word-card mt-5 p-5">
-              <AttemptsTable rows={attempts} showTeacher />
+              <AttemptPager page={attemptPage} total={attemptTotal} onPage={setAttemptPage} />
+              {attemptLoading ? <p className="py-10 text-center text-slate-500">正在读取本页练习与录音…</p> : <AttemptsTable rows={attempts} showTeacher />}
             </div>
           </div>
         )}

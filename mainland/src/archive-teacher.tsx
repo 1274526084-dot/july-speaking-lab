@@ -58,7 +58,7 @@ import { type EnglishProfile, SKILL_LABELS } from './profile-api';
 import { getWordToken, wordPath, wordRequest } from './word-api';
 import './archive-teacher.css';
 
-type Tab = 'students' | 'unit2' | 'tasks' | 'news' | 'devices';
+type Tab = 'students' | 'unit2' | 'tasks' | 'news' | 'devices' | 'overview';
 type TaskType =
   | 'word'
   | 'speaking'
@@ -214,6 +214,7 @@ type StudentDetail = {
   warnings?: string[];
 };
 type Dashboard = {
+  teacher?: { code: string; name: string; assignedClasses: string[]; canManageCourse: boolean };
   students: Student[];
   tasks: ArchiveTask[];
   news: ArchiveNews[];
@@ -221,6 +222,13 @@ type Dashboard = {
   profileRestricted?: boolean;
   hasMore?: boolean;
   warnings?: string[];
+};
+type TeacherOverview = {
+  teachers: { code: string; name: string; studentCount: number; classes: { className: string; studentCount: number; activeCount: number; wordAverage: number | null; speakingAverage: number | null; quizAverage: number | null }[] }[];
+  assignments: Record<string, string[]>;
+  unassignedClassCount: number;
+  hasMore: boolean;
+  canEdit: boolean;
 };
 
 const taskLabels: Record<TaskType, string> = {
@@ -418,7 +426,9 @@ function Dialog({
 
 export function ArchiveTeacher() {
   const [tab, setTab] = useState<Tab>(() =>
-    new URLSearchParams(location.search).get('tab') === 'devices'
+    new URLSearchParams(location.search).get('tab') === 'overview'
+      ? 'overview'
+      : new URLSearchParams(location.search).get('tab') === 'devices'
       ? 'devices'
       : new URLSearchParams(location.search).get('tab') === 'unit2'
         ? 'unit2'
@@ -432,6 +442,9 @@ export function ArchiveTeacher() {
   });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [overview, setOverview] = useState<TeacherOverview | null>(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+  const [assignmentDraft, setAssignmentDraft] = useState<Record<string, string[]> | null>(null);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [query, setQuery] = useState('');
@@ -502,6 +515,35 @@ export function ArchiveTeacher() {
     }, 30000);
     return () => window.clearInterval(timer);
   }, [load]);
+  const loadOverview = useCallback(async () => {
+    setOverviewLoading(true);
+    try {
+      const result = await archiveRequest<TeacherOverview>('teacherOverview', {}, getTeacherToken());
+      setOverview(result);
+      setAssignmentDraft(result.assignments);
+      setError('');
+    } catch (requestError) {
+      setError(errorText(requestError));
+    } finally {
+      setOverviewLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (tab === 'overview') void loadOverview();
+  }, [tab, loadOverview]);
+  async function saveAssignments() {
+    if (!assignmentDraft || !window.confirm('确认更新四位老师的班级分工？学生成绩不会改动。')) return;
+    setOverviewLoading(true);
+    try {
+      await archiveRequest('saveTeacherAssignments', { assignments: assignmentDraft }, getTeacherToken());
+      setMessage('班级分工已同步到教师工作台。');
+      await Promise.all([loadOverview(), load(true)]);
+    } catch (requestError) {
+      setError(errorText(requestError));
+    } finally {
+      setOverviewLoading(false);
+    }
+  }
   const directory = useMemo(
     () =>
       createClassDirectory(
@@ -515,10 +557,10 @@ export function ArchiveTeacher() {
       [
         ...new Set([
           ...directory.groups.map((group) => group.label),
-          ...CLASS_CATALOG,
+          ...(data.teacher?.canManageCourse ? CLASS_CATALOG : data.teacher?.assignedClasses || []),
         ]),
       ].sort((a, b) => a.localeCompare(b, 'zh-CN', { numeric: true })),
-    [directory],
+    [directory, data.teacher],
   );
   const students = useMemo(
     () =>
@@ -611,6 +653,7 @@ export function ArchiveTeacher() {
           {(
             [
               { id: 'students', label: '班级档案', icon: UsersRound },
+              { id: 'overview', label: '四师总览', icon: Layers3 },
               { id: 'unit2', label: '第二课成绩', icon: GraduationCap },
               { id: 'tasks', label: '任务与组题', icon: ClipboardList },
               { id: 'news', label: '铁路英语窗', icon: Newspaper },
@@ -672,6 +715,32 @@ export function ArchiveTeacher() {
           </div>
         ) : (
           <>
+            {tab === 'overview' && (
+              <section className="at-panel">
+                <div className="at-panel-heading">
+                  <div><h2>四位老师 · 班级总览</h2><p>只展示班级汇总；学生个人档案仍由任课教师查看。</p></div>
+                  <button type="button" className="at-secondary" onClick={() => void loadOverview()} disabled={overviewLoading}>刷新总览</button>
+                </div>
+                {overviewLoading && !overview ? <div className="at-loading"><LoaderCircle className="at-spin" />正在统计…</div> : null}
+                {overview?.hasMore && <Notice danger>部分记录未完整读取，暂不应用汇总数字。</Notice>}
+                {overview && <>
+                  <p className="at-help">四位老师合计 {overview.teachers.reduce((sum, row) => sum + row.studentCount, 0)} 份档案；另有 {overview.unassignedClassCount} 个班级尚未分给这四位老师。</p>
+                  <div className="at-owner-grid">
+                    {overview.teachers.map((owner) => <article className="at-owner-card" key={owner.code}>
+                      <h3>{owner.name}</h3><p>{owner.classes.length} 个班 · {owner.studentCount} 份档案</p>
+                      <div className="at-table-wrap"><table className="at-table"><thead><tr><th>班级</th><th>人数</th><th>单词</th><th>口语</th><th>小测</th></tr></thead><tbody>
+                        {owner.classes.map((group) => <tr key={group.className}><td>{group.className}</td><td>{group.studentCount}</td><td>{scoreText(group.wordAverage)}</td><td>{scoreText(group.speakingAverage)}</td><td>{scoreText(group.quizAverage)}</td></tr>)}
+                      </tbody></table></div>
+                    </article>)}
+                  </div>
+                  {overview.canEdit && assignmentDraft && <details className="at-assignment-editor"><summary>July 管理班级分工</summary>
+                    <p className="at-help">仅调整教师负责的班级；不会修改学生原始成绩、录音或学习记录。</p>
+                    <div className="at-assignment-grid">{CLASS_CATALOG.filter((name) => !name.includes('默认班级')).map((name) => <label key={name}>{name}<select value={Object.entries(assignmentDraft).find(([, list]) => list.includes(name))?.[0] || ''} onChange={(event) => { const next = Object.fromEntries(Object.entries(assignmentDraft).map(([code, list]) => [code, list.filter((item) => item !== name)])) as Record<string, string[]>; if (event.target.value) next[event.target.value] = [...next[event.target.value], name]; setAssignmentDraft(next); }}><option value="">未分配</option>{overview.teachers.map((owner) => <option key={owner.code} value={owner.code}>{owner.name}</option>)}</select></label>)}</div>
+                    <button type="button" className="at-primary" disabled={overviewLoading} onClick={() => void saveAssignments()}>保存并同步分工</button>
+                  </details>}
+                </>}
+              </section>
+            )}
             {tab === 'unit2' && (
               <section className="at-panel">
                 <div className="at-panel-heading">

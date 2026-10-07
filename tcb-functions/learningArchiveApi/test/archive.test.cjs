@@ -172,7 +172,8 @@ test('student lesson scores remain private, teacher scores are class bound, and 
   const result = await f.call('courseStudentScores', { studentToken: auth.studentToken });
   assert.ok(result.courseProgress.lessons.some(item => item.unit === 1 && item.lesson === 2 && item.latest === 100));
   assert.ok(!result.courseProgress.lessons.some(item => item.lesson === 3));
-  assert.equal((await f.call('teacherCourseScores', { token: f.tokens.alice })).students.length, 2);
+  assert.equal((await f.call('teacherCourseScores', { token: f.tokens.alice })).students.length, 0);
+  assert.equal((await f.call('teacherCourseScores', { token: f.tokens.july })).students.length, 2);
 });
 
 test('word share codes attach repeats to one lesson only, without editing raw grades or foreign units', async () => {
@@ -221,6 +222,52 @@ test('school reclassification persists only reversible project mappings, never g
   assert.equal(JSON.stringify(f.db.rows(LEGACY.words)), before);
 });
 
+test('July roster reassignment moves only fingerprint-matched default records and preserves grades and audio', async () => {
+  const original = [word('default-word', '李同学', '默认班级', { average_score: 73 })];
+  const f = fixture({ [LEGACY.words]: original });
+  const before = JSON.stringify(f.db.rows(LEGACY.words));
+  assert.equal((await f.call('adminClassAudit', { token: f.tokens.lisa })).status, 403);
+  const audit = await f.call('adminClassAudit', { token: f.tokens.july });
+  assert.equal(audit.total, 1);
+  const item = audit.rows[0];
+  const mapping = { sourceCollection: item.sourceCollection, sourceId: item.sourceId, fingerprint: item.fingerprint, name: item.name, className: '26-人工智能16班' };
+  assert.equal((await f.call('adminClassMigration', { token: f.tokens.july, mappings: [{ ...mapping, fingerprint: '0'.repeat(64) }], commit: true })).status, 409);
+  assert.equal((await f.call('adminClassMigration', { token: f.tokens.lisa, mappings: [mapping], commit: true })).status, 403);
+  const preview = await f.call('adminClassMigration', { token: f.tokens.july, mappings: [mapping] });
+  assert.equal(preview.committed, false);
+  assert.equal(f.db.rows(C.classNormalization).length, 0);
+  const committed = await f.call('adminClassMigration', { token: f.tokens.july, mappings: [mapping], commit: true });
+  assert.equal(committed.committed, true);
+  assert.deepEqual(f.db.rows(LEGACY.words), JSON.parse(before));
+  assert.equal((await f.call('teacherDashboard', { token: f.tokens.july })).students[0].className, '26-人工智能16班');
+  const lisa = await f.call('teacherDashboard', { token: f.tokens.lisa });
+  assert.equal(lisa.students[0].wordAverage, 73);
+  const detail = await f.call('teacherStudent', { token: f.tokens.lisa, studentId: lisa.students[0].id });
+  assert.equal(detail.history[0].audio.length, 1);
+  assert.equal((await f.call('teacherStudent', { token: f.tokens.cherie, studentId: lisa.students[0].id })).status, 403);
+});
+
+test('teacher assignments scope student records and tasks while July manages aggregate and ownership', async () => {
+  const f = fixture({ [LEGACY.words]: [word('july-word'), word('lisa-word', '林同学', '26-人工智能16班')] });
+  const july = await f.call('teacherDashboard', { token: f.tokens.july });
+  const lisa = await f.call('teacherDashboard', { token: f.tokens.lisa });
+  assert.equal(july.students.length, 2);
+  assert.equal(lisa.students.length, 1);
+  assert.equal(lisa.students[0].name, '林同学');
+  const overall = await f.call('teacherOverview', { token: f.tokens.cherie });
+  assert.equal(overall.teachers.find(row => row.code === 'lisa').studentCount, 1);
+  assert.equal(overall.canEdit, false);
+  assert.equal((await f.call('saveTeacherAssignments', { token: f.tokens.lisa, assignments: overall.assignments })).status, 403);
+  const changed = structuredClone(overall.assignments);
+  changed.lisa = changed.lisa.filter(label => label !== '26-人工智能16班');
+  changed.cherie.push('26-人工智能16班');
+  assert.equal((await f.call('saveTeacherAssignments', { token: f.tokens.july, assignments: changed })).ok, true);
+  assert.equal((await f.call('teacherDashboard', { token: f.tokens.lisa })).students.length, 0);
+  assert.equal((await f.call('teacherDashboard', { token: f.tokens.cherie })).students.length, 1);
+  assert.equal((await f.call('saveTask', { token: f.tokens.lisa, task: quiz({ classes: ['26-人工智能16班'] }) })).status, 403);
+  assert.equal((await f.call('saveTask', { token: f.tokens.cherie, task: quiz({ classes: ['26-人工智能16班'] }) })).ok, true);
+});
+
 test('Unit 2 submissions are server scored, idempotent and bound to the authorized student', async () => {
   const f = fixture({ [LEGACY.profiles]: [profile('keep-profile')], [LEGACY.words]: [word('keep-word')] });
   const auth = await f.authorize();
@@ -236,9 +283,9 @@ test('Unit 2 submissions are server scored, idempotent and bound to the authoriz
   assert.ok(f.db.writes.every(write => !Object.values(LEGACY).includes(write.collection)));
   const other = await f.authorize('另一位学生');
   assert.equal((await f.call('unit2Dashboard', { studentToken: other.studentToken })).unit2.attemptCount, 0);
-  const teacher = await f.call('teacherDashboard', { token: f.tokens.lisa });
+  const teacher = await f.call('teacherDashboard', { token: f.tokens.july });
   assert.equal(teacher.students.find(row => row.id === auth.studentId).unit2.stages.pinglu.first, 100);
-  const detail = await f.call('teacherStudent', { token: f.tokens.lisa, studentId: auth.studentId });
+  const detail = await f.call('teacherStudent', { token: f.tokens.july, studentId: auth.studentId });
   assert.equal(detail.history.filter(row => row.type === 'unit2').length, 2);
   assert.equal(detail.unit2.stages.pinglu.latest, 0);
   assert.equal((await f.call('saveUnit2Attempt', { ...payload, studentToken: other.studentToken, requestId: 'unit2-test-0003', activity: 'malaysia' })).status, 400);
@@ -402,7 +449,8 @@ test('classroom confirmation requires a current teacher and identity check but n
   assert.equal((await f.call('approveAccess', body)).status, 401);
   assert.equal((await f.call('approveAccess', { ...body, token: f.tokens.july, identityVerified: false })).status, 400);
   assert.equal((await f.call('approveAccess', { ...body, token: f.tokens.july, name: '别的学生' })).status, 400);
-  assert.equal((await f.call('approveAccess', { ...body, token: f.tokens.lisa })).ok, true);
+  assert.equal((await f.call('approveAccess', { ...body, token: f.tokens.lisa })).status, 403);
+  assert.equal((await f.call('approveAccess', { ...body, token: f.tokens.july })).ok, true);
   const status = await f.call('accessStatus', { requestToken: request.requestToken });
   assert.equal(status.status, 'approved');
   assert.equal((await f.call('studentDashboard', { studentToken: status.studentToken })).history.length, 1);
@@ -417,7 +465,7 @@ test('live pending list hides processed, expired and foreign requests without is
   const expired = await f.call('requestAccess', { name: '过期学生', className: '26-城轨信号54班' });
   f.advance(86400001);
   await f.call('requestAccess', { name: '新申请', className: '26-城轨信号54班' });
-  const list = await f.call('listAccessRequests', { token: f.tokens.cherie, pendingOnly: true });
+  const list = await f.call('listAccessRequests', { token: f.tokens.july, pendingOnly: true });
   assert.equal(list.requests.length, 1);
   assert.equal(list.requests[0].name, '新申请');
   assert.equal(list.requests.some(row => row.id === expired.requestId), false);
@@ -442,7 +490,8 @@ test('approved access polls reuse a hashed 30-day device session; revocation den
   assert.equal(JSON.stringify(f.db.rows(C.sessions)).includes(approved.studentToken), false);
   assert.equal(again.expiresAt - f.time(), 30 * 86400000);
   const teacherView = await f.call('teacherStudent', { token: f.tokens.july, studentId: approved.studentId });
-  const revoked = await f.call('revokeDevice', { token: f.tokens.cherie, sessionId: teacherView.devices[0].id });
+  assert.equal((await f.call('revokeDevice', { token: f.tokens.cherie, sessionId: teacherView.devices[0].id })).status, 403);
+  const revoked = await f.call('revokeDevice', { token: f.tokens.july, sessionId: teacherView.devices[0].id });
   assert.equal(revoked.ok, true);
   assert.equal((await f.call('studentDashboard', { studentToken: approved.studentToken })).status, 401);
   assert.equal((await f.call('accessStatus', { requestToken: approved.requestToken })).status, 'revoked');
@@ -501,7 +550,7 @@ test('ambiguous incomplete classes require teacher corroboration and never merge
 });
 
 test('legacy survey detail remains July-only across teacher summaries and individual history', async () => {
-  const f = fixture({ [LEGACY.profiles]: [profile('p1')], [LEGACY.words]: [word('w1')] });
+  const f = fixture({ [LEGACY.profiles]: [profile('p1', '张同学', '26-无人机1班')], [LEGACY.words]: [word('w1', '张同学', '26-无人机1班')] });
   const july = await f.call('teacherDashboard', { token: f.tokens.july });
   assert.equal(july.students[0].profile.entrance_english_score, 96);
   const cherie = await f.call('teacherDashboard', { token: f.tokens.cherie });
@@ -562,12 +611,13 @@ test('quiz answers stay private until server-scored submission; retries are idem
 
 test('quiz cannot be submitted by another class or from a draft; task ownership supports copying', async () => {
   const f = fixture();
-  const saved = await f.call('saveTask', { token: f.tokens.cherie, task: quiz({ status: 'draft' }) });
+  const saved = await f.call('saveTask', { token: f.tokens.cherie, task: quiz({ status: 'draft', classes: ['26-无人机1班'] }) });
   const auth = await f.authorize();
   const payload = { studentToken: auth.studentToken, taskId: saved.task.id, taskVersion: saved.task.version, requestId: 'request-draft-123', answers: [0, 1] };
   assert.equal((await f.call('submitQuiz', payload)).status, 404);
   assert.equal((await f.call('saveTask', { token: f.tokens.lisa, task: { ...quiz(), id: saved.task.id } })).status, 403);
-  assert.equal((await f.call('saveTask', { token: f.tokens.lisa, task: quiz() })).ok, true);
+  assert.equal((await f.call('saveTask', { token: f.tokens.lisa, task: quiz() })).status, 403);
+  assert.equal((await f.call('saveTask', { token: f.tokens.lisa, task: quiz({ classes: ['26-人工智能16班'] }) })).ok, true);
   assert.equal((await f.call('saveTask', { token: f.tokens.july, task: { ...quiz(), id: saved.task.id, classes: ['26-城轨信号53班'] } })).ok, true);
   assert.equal((await f.call('submitQuiz', payload)).status, 404);
 });
@@ -691,7 +741,7 @@ test('all teacher request payloads omit verification secrets and revoked status 
   const f = fixture();
   const request = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班' });
   for (const action of ['listAccessRequests', 'teacherDashboard']) {
-    const response = await f.call(action, { token: f.tokens.cherie });
+    const response = await f.call(action, { token: f.tokens.july });
     const row = response.requests[0];
     for (const secretKey of ['verificationCode', 'verification_hash', 'requestToken', 'request_token_hash', 'session_id']) assert.equal(Object.hasOwn(row, secretKey), false);
     assert.ok(Object.values(row).every(value => value !== request.verificationCode && value !== request.requestToken));

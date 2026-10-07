@@ -2,6 +2,7 @@
 const cloudbase = require('@cloudbase/node-sdk');
 const { asr } = require('tencentcloud-sdk-nodejs-asr');
 const { createHash, pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual } = require('node:crypto');
+const { archiveClassAccess } = require('./archive-class-access');
 
 const app = cloudbase.init({ env: cloudbase.SYMBOL_CURRENT_ENV });
 const db = app.database();
@@ -897,9 +898,21 @@ async function handleListAttempts(event, body) {
   const session = await validSession(body.token, ['teacher', 'admin']);
   if (!session) return response(event, 401, { ok: false, error: '登录已失效，请重新登录。' });
   const where = { status: 'completed' };
-  const result = (await queryRows(ATTEMPTS, where, 500)).filter(belongsToProject);
+  const access = await archiveClassAccess(db);
+  const teacher = session.role === 'teacher' ? await getDocument(TEACHERS, session.teacher_id) : null;
+  if (session.role === 'teacher' && (!teacher?.active || !teacher.code)) return response(event, 403, { ok: false, error: '教师账号已失效。' });
+  const result = (await queryRows(ATTEMPTS, where, 1000)).filter(row => belongsToProject(row) && (session.role === 'admin' || access.canSee(teacher.code, row, ATTEMPTS))).map(row => ({ ...row, raw_class_name: row.class_name, class_name: access.className(row, ATTEMPTS) }));
   result.sort((left, right) => Number(right.submitted_at || 0) - Number(left.submitted_at || 0));
-  return response(event, 200, { ok: true, projectId: PROJECT_ID, rows: await hydrateAttempts(result) });
+  const limit = Math.max(1, Math.min(30, Number(body.limit) || 30));
+  const offset = Math.max(0, Math.min(1000, Number(body.offset) || 0));
+  return response(event, 200, {
+    ok: true,
+    projectId: PROJECT_ID,
+    total: result.length,
+    offset,
+    limit,
+    rows: await hydrateAttempts(result.slice(offset, offset + limit)),
+  });
 }
 
 async function handleAdminListTeachers(event, body) {
