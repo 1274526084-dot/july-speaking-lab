@@ -4,6 +4,7 @@ const { createSchoolClassDirectory: createClassDirectory, projectSchoolRecord, n
 const { CLASS_CATALOG } = require('./class-catalog');
 const { DEFAULT_ASSIGNMENTS, DISPLAY_NAMES } = require('./class-ownership');
 const { gradeUnit2, unit2Summary } = require('./unit2');
+const { gradeLesson3 } = require('./lesson3');
 const { position, courseCatalog, lessonProgress } = require('./course');
 
 const PROJECT_ID = 'lzrtc-public-english-2026';
@@ -446,7 +447,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     const speaking = legacyRows('speaking', student, data).map(row => ({ id: `speaking:${row.id || row._id}`, type: 'speaking', title: text(row.scene_title, 160) || '情景口语练习', submittedAt: timestamp(row), score: score(row.total_score), details: { studentId: text(row.student_id, 60), transcript: text(row.transcript, 8000), feedback: typeof row.feedback === 'string' ? text(row.feedback, 4000) : parse(row.feedback, {}), taskScore: score(row.task_score), sentenceScore: score(row.sentence_score), clarityScore: score(row.clarity_score), interactionScore: score(row.interaction_score), durationSeconds: Number(row.duration_seconds || 0) }, audio: array(row.audio_manifest).map((clip, index) => ({ fileId: clip.key, label: `第${Number(clip.round) || index + 1}轮录音` })) }));
     const quizzes = archiveRows('submissions', student, data).map(row => ({ id: `quiz:${row.id || row._id}`, type: 'quiz', taskId: row.task_id, title: row.task_title, submittedAt: row.created_at, score: row.score, details: { taskId: row.task_id, taskVersion: row.task_version ?? row.task_updated_at, answers: row.answers, feedback: row.feedback, total: row.total, correct: row.correct }, audio: [] }));
     const profiles = includeProfiles ? legacyRows('profiles', student, data).map(row => ({ id: `profile:${row.id || row._id}`, type: 'profile', title: '学期初学习画像', submittedAt: timestamp(row), score: null, details: publicProfile(row), audio: [] })) : [];
-    const unit2 = archiveRows('unit2', student, data).map(row => ({ id: `unit2:${row.id}`, type: 'unit2', title: row.title, submittedAt: row.created_at, score: row.score, details: { ...row.details, activity: row.activity, total: row.total, correct: row.correct }, audio: [] }));
+    const unit2 = archiveRows('unit2', student, data).map(row => ({ id: `unit2:${row.id}`, type: row.course_lesson === 'Lesson 3' ? 'lesson3' : 'unit2', title: row.title, submittedAt: row.created_at, score: row.score, details: { ...row.details, activity: row.activity, total: row.total, correct: row.correct }, audio: [] }));
     return [...words, ...speaking, ...quizzes, ...profiles, ...unit2].sort((a, b) => b.submittedAt - a.submittedAt);
   }
   function summaryFor(history, reflections) {
@@ -579,8 +580,8 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
         return { status: 'approved', studentToken, student: publicStudent(student), expiresAt: session.expires_at };
       } catch (error) { if (error.status === 401) return { status: 'revoked' }; throw error; }
     }
-    if (['studentDashboard', 'saveReflection', 'submitQuiz', 'studentLogout', 'saveUnit2Attempt', 'unit2Dashboard', 'courseSession', 'courseStudentScores'].includes(action)) {
-      const auth = await studentSession(body.studentToken, ['courseSession', 'saveUnit2Attempt', 'submitQuiz', 'courseStudentScores', 'unit2Dashboard'].includes(action));
+    if (['studentDashboard', 'saveReflection', 'submitQuiz', 'studentLogout', 'saveUnit2Attempt', 'saveLesson3Attempt', 'unit2Dashboard', 'courseSession', 'courseStudentScores'].includes(action)) {
+      const auth = await studentSession(body.studentToken, ['courseSession', 'saveUnit2Attempt', 'saveLesson3Attempt', 'submitQuiz', 'courseStudentScores', 'unit2Dashboard'].includes(action));
       const { student, session } = auth;
       await rate(event, action, action === 'studentDashboard' ? 90 : 30, 15 * 60 * 1000, student.id);
       if (action === 'studentLogout') {
@@ -624,6 +625,31 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
           return result;
         });
         return { pendingVerification: Boolean(auth.practice), submission: { id: row.id, activity: row.activity, score: row.score, total: row.total, correct: row.correct, submittedAt: row.created_at } };
+      }
+      if (action === 'saveLesson3Attempt') {
+        const requestId = requiredText(body.requestId, '提交编号', 100);
+        if (!/^[a-zA-Z0-9_-]{8,100}$/.test(requestId)) fail(400, '提交编号不正确。');
+        let graded;
+        try { graded = gradeLesson3(body); } catch (error) { fail(400, error.message); }
+        const id = `lesson3-${hash(`${PROJECT_ID}|${requestId}`).slice(0, 48)}`;
+        const fingerprint = hash(JSON.stringify(graded));
+        const row = await db.runTransaction(async tx => {
+          const previous = await existingAttempt('unit2', id, id, auth, tx);
+          if (previous) {
+            if (previous.fingerprint !== fingerprint) fail(409, '提交编号已被其他答案使用，请重新提交。');
+            return previous;
+          }
+          const result = { ...graded, id, fingerprint, project_id: PROJECT_ID,
+            student_id: student.id, unit: 'Unit 1', course_unit: 'Unit 1',
+            course_lesson: 'Lesson 3', created_at: now() };
+          if (auth.practice) await recordPractice(result, auth, tx, 'unit2');
+          else await put(COLLECTIONS.unit2, id, result, tx);
+          return result;
+        });
+        return { pendingVerification: Boolean(auth.practice), submission: {
+          id: row.id, activity: row.activity, score: row.score,
+          total: row.total, correct: row.correct, submittedAt: row.created_at,
+        } };
       }
       if (action === 'unit2Dashboard') {
         const data = await datasets();

@@ -83,6 +83,28 @@ const builtin: ArchiveTask[] = [
     description: '',
     href: `/july-Englishclass/${file}`,
   })),
+  {
+    id: 'builtin-lesson3-words',
+    title: '第三课单词跟读',
+    unit: 'Unit 1',
+    lesson: 'Lesson 3',
+    type: 'word',
+    description: '',
+    href: '/july-speaking-lab/words/?unit=TU8ZGE',
+  },
+  ...[
+    ['lesson-3-vocabulary-matching.html', '词组匹配（一）'],
+    ['lesson-3-vocabulary-matching-2.html', '词组匹配（二）'],
+    ['lesson-3-reading-task1-task3.html', '阅读理解 Task 1 + Task 3'],
+  ].map(([file, title], i) => ({
+    id: `builtin-lesson3-${i}`,
+    title,
+    unit: 'Unit 1',
+    lesson: 'Lesson 3',
+    type: 'link',
+    description: '',
+    href: `/july-Englishclass/${file}`,
+  })),
 ];
 const coordinate = (value: string) => Number(value.match(/\d+/)?.[0] || 0);
 const mark = (value?: number | null) => (value == null ? '—' : `${value}分`);

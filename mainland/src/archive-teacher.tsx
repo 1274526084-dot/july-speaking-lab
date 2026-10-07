@@ -1597,6 +1597,7 @@ function StudentDialog({
                 >
                   <option value="all">全部记录</option>
                   <option value="unit2">第二课测试与写作</option>
+                  <option value="lesson3">第三课词组与阅读</option>
                   <option value="word">单词跟读</option>
                   <option value="speaking">情境口语</option>
                   <option value="quiz">铁路小测</option>
@@ -1810,9 +1811,9 @@ function HistoryDetails({ record }: { record: History }) {
     : [];
   return (
     <>
-      {record.type === 'unit2' && (
+      {(record.type === 'unit2' || record.type === 'lesson3') && (
         <details>
-          <summary>查看第二课答案 / 作文原文</summary>
+          <summary>{record.type === 'lesson3' ? '查看第三课作答' : '查看第二课答案 / 作文原文'}</summary>
           <div className="at-quiz-feedback">
             {record.details?.essay && (
               <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.9 }}>
@@ -1857,7 +1858,7 @@ function HistoryDetails({ record }: { record: History }) {
           </div>
         </details>
       ) : null}
-      {record.type !== 'unit2' && quizFeedback.length ? (
+      {record.type !== 'unit2' && record.type !== 'lesson3' && quizFeedback.length ? (
         <details>
           <summary>查看小测答题与解析</summary>
           <div className="at-quiz-feedback">

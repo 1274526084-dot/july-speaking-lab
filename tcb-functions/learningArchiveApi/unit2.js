@@ -249,6 +249,7 @@ function gradeUnit2(body) {
   };
 }
 function unit2Summary(rows) {
+  rows = rows.filter(row => Object.hasOwn(ACTIVITIES, row.activity));
   const stages = {};
   for (const key of Object.keys(ACTIVITIES)) {
     const list = rows
