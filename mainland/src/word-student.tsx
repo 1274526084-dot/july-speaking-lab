@@ -15,6 +15,7 @@ import { type SyntheticEvent, useEffect, useRef, useState } from 'react';
 import { getCourseStudent, rememberCourseStudent } from './course-session';
 import { ensureCoursePractice } from './classroom-identity';
 import { StudentClassField } from '@/components/student-class-field';
+import { StudentGradeNotice } from '@/components/student-grade-notice';
 import {
   prepareAudioForUpload,
   type WordUnit,
@@ -672,12 +673,13 @@ export function WordStudent() {
               <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" />
               <span>
                 <strong>已经直接进入本单元。</strong>
-                填写姓名和班级后即可开始；下次会自动填写。
+                每节课填写一次姓名和班级，后续任务会自动填写，请核对后继续。
                 {unit.note && (
                   <span className="mt-1 block">老师提示：{unit.note}</span>
                 )}
               </span>
             </div>
+            <StudentGradeNotice />
             <form onSubmit={startPractice} className="mt-5 grid gap-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="word-label">
@@ -705,7 +707,7 @@ export function WordStudent() {
                   onChange={(event) => setConsent(event.target.checked)}
                   className="mt-1 h-5 w-5 shrink-0 accent-indigo-600"
                 />
-                <span>同意将本次录音、识别文字和评分提交给任课教师。</span>
+                <span>同意将本次录音、识别文字和评分提交给任课教师，用于课程反馈及平时成绩评定参考。</span>
               </label>
               {error && (
                 <p role="alert" className="word-error">

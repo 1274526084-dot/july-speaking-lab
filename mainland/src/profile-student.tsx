@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { getCourseStudent, rememberCourseStudent } from './course-session';
 import { ensureCoursePractice } from './classroom-identity';
 import { StudentClassField } from '@/components/student-class-field';
+import { StudentGradeNotice } from '@/components/student-grade-notice';
 import { collegeForClass } from '@/lib/class-catalog';
 import { normalizeSchoolClass } from '@/lib/school-classes';
 import {
@@ -562,9 +563,10 @@ export function ProfileStudent() {
                   <UserRound />
                   <div>
                     <strong>先填写你的基本信息</strong>
-                    <p>学生无需账号密码，姓名和班级用于老师筛选档案。</p>
+                    <p>无需账号密码，请核对本人姓名和班级，便于关联学习记录。</p>
                   </div>
                 </div>
+                <StudentGradeNotice survey />
                 <div className="two-columns">
                   <label className="text-field" style={{ alignSelf: 'start' }}>
                     <span>姓名 *</span>

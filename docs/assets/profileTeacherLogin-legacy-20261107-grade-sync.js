@@ -1,0 +1,1 @@
+System.register(["./chunks/school-class-filter-legacy-20261107-grade-sync.js","./chunks/profile-main-legacy-20261107-grade-sync.js"],function(e,n){return{setters:[function(e){},function(e){}],execute:function(){}}});

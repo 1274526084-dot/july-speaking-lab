@@ -911,3 +911,223 @@ test('indexed summaries equal the authorized detail view, including July profile
   assert.equal(own.returnedRecordCounts, undefined);
   assert.equal((await f.call('publicFeed')).collectionTotals, undefined);
 });
+
+// Teacher-only name/class grade projection must not become student authorization.
+function gradeSyncRequest(id, name = '张同学', className = '26-城轨信号54班', extra = {}) {
+  return { id, project_id: PROJECT_ID, name, class_name: className, status: 'pending', created_at: 1, expires_at: 2, ...extra };
+}
+function gradeSyncWord(id, requestId, name = '张同学', className = '26-城轨信号54班', extra = {}) {
+  return word(id, name, className, { archive_binding_version: 1, archive_binding: 'pending', archive_request_id: requestId, course_unit: 'Unit 2', course_lesson: 'Lesson 1', ...extra });
+}
+
+test('teacher grade sync joins expired requests and safe class/name aliases without changing first/latest scoring', async () => {
+  const f = fixture({
+    [C.requests]: [gradeSyncRequest('sync-old'), gradeSyncRequest('sync-new', ' 张 同学 ', '城轨信号2654')],
+    [LEGACY.words]: [
+      word('sync-base', '张同学', '26-城轨信号54班', { average_score: 40, submitted_at: 10, course_unit: 'Unit 2', course_lesson: 'Lesson 1' }),
+      gradeSyncWord('sync-old-word', 'sync-old', '张同学', '26-城市轨道交通通信信号技术054班', { average_score: 60, submitted_at: 20 }),
+      gradeSyncWord('sync-new-word', 'sync-new', '张 同学', '26-城轨信号54班', { average_score: 80, submitted_at: 30 }),
+    ],
+  });
+  const dashboard = await f.call('teacherDashboard', { token: f.tokens.july });
+  assert.equal(dashboard.ok, true);
+  assert.equal(dashboard.students.length, 1);
+  const student = dashboard.students[0];
+  assert.equal(student.className, '26-城轨信号54班');
+  assert.equal(student.wordCount, 3);
+  assert.equal(student.wordAverage, 60);
+  const scores = await f.call('teacherCourseScores', { token: f.tokens.july });
+  const lesson = scores.students[0].courseProgress.lessons.find(row => row.unit === 2 && row.lesson === 1);
+  assert.equal(lesson.first, 40);
+  assert.equal(lesson.latest, 80);
+  assert.equal(lesson.change, 40);
+  assert.equal(lesson.attempts, 3);
+  const detail = await f.call('teacherStudent', { token: f.tokens.july, studentId: student.id });
+  assert.deepEqual(detail.history.map(row => row.id).sort(), ['word:sync-base', 'word:sync-new-word', 'word:sync-old-word']);
+  assert.equal(f.db.rows(C.requests).every(row => row.status === 'pending'), true);
+  assert.equal(f.db.rows(C.students).length, 0);
+  assert.equal(f.db.rows(C.sessions).length, 0);
+});
+
+test('teacher grade sync accepts project unverified grades but isolates the same name in another class', async () => {
+  const f = fixture({
+    [C.requests]: [gradeSyncRequest('sync-54'), gradeSyncRequest('sync-53', '张同学', '26-城轨信号53班')],
+    [LEGACY.words]: [
+      gradeSyncWord('sync-54-pending', 'sync-54', '张同学', '26-城轨信号54班', { average_score: 70 }),
+      gradeSyncWord('sync-54-unverified', undefined, '张同学', '城轨信号2654', { archive_binding: 'unverified', average_score: 40 }),
+      gradeSyncWord('sync-53-pending', 'sync-53', '张同学', '26-城轨信号53班', { average_score: 90 }),
+    ],
+  });
+  const view = await f.call('teacherDashboard', { token: f.tokens.july });
+  assert.equal(view.students.length, 2);
+  const a = view.students.find(row => row.className === '26-城轨信号54班');
+  const b = view.students.find(row => row.className === '26-城轨信号53班');
+  assert.notEqual(a.id, b.id);
+  assert.equal(a.wordCount, 2);
+  assert.equal(a.wordAverage, 55);
+  assert.equal(b.wordCount, 1);
+  assert.equal(b.wordAverage, 90);
+  const detail = await f.call('teacherStudent', { token: f.tokens.july, studentId: a.id });
+  assert.deepEqual(detail.history.map(row => row.id).sort(), ['word:sync-54-pending', 'word:sync-54-unverified']);
+});
+
+test('teacher grade sync discovers quiz-only students and joins Unit 2 practice across requests', async () => {
+  const f = fixture();
+  const task = (await f.call('saveTask', { token: f.tokens.july, task: quiz() })).task;
+  const first = await f.call('requestAccess', { name: '仅测验学生', className: '26-城轨信号54班', practice: true });
+  assert.equal((await f.call('submitQuiz', { studentToken: first.practiceToken, taskId: task.id, taskVersion: task.version, requestId: 'sync-only-quiz-0001', answers: [0, 1] })).submission.score, 100);
+  f.advance(10);
+  const second = await f.call('requestAccess', { name: '仅测验学生', className: '城轨信号2654', practice: true });
+  assert.equal((await f.call('saveUnit2Attempt', { studentToken: second.practiceToken, requestId: 'sync-only-unit2-0001', activity: 'pinglu', answers: Array(10).fill('wrong') })).submission.score, 0);
+  const view = await f.call('teacherDashboard', { token: f.tokens.july });
+  assert.equal(view.students.length, 1);
+  assert.equal(view.students[0].name, '仅测验学生');
+  assert.equal(view.students[0].quizCount, 1);
+  assert.equal(view.students[0].unit2.attemptCount, 1);
+  const scores = await f.call('teacherCourseScores', { token: f.tokens.july });
+  const lessons = scores.students[0].courseProgress.lessons;
+  assert.equal(lessons.find(row => row.unit === 1 && row.lesson === 1).latest, 100);
+  assert.equal(lessons.find(row => row.unit === 1 && row.lesson === 2).latest, 0);
+  assert.equal(f.db.rows(C.students).length, 0);
+  assert.equal(f.db.rows(C.submissions).length, 0);
+  assert.equal(f.db.rows(C.unit2).length, 0);
+  assert.equal(f.db.rows(C.practiceAttempts).length, 2);
+});
+
+test('teacher grade sync excludes rejected, foreign, missing-request, mismatched and ambiguous evidence', async () => {
+  const f = fixture({
+    [C.requests]: [
+      gradeSyncRequest('sync-valid'),
+      gradeSyncRequest('sync-rejected', '张同学', '26-城轨信号54班', { status: 'rejected' }),
+      gradeSyncRequest('sync-foreign', '张同学', '26-城轨信号54班', { project_id: 'malaysia' }),
+    ],
+    [LEGACY.words]: [
+      gradeSyncWord('sync-valid-word', 'sync-valid', '张同学', '26-城轨信号54班', { average_score: 77 }),
+      gradeSyncWord('sync-rejected-word', 'sync-rejected'),
+      gradeSyncWord('sync-missing-word', 'does-not-exist'),
+      gradeSyncWord('sync-foreign-request-word', 'sync-foreign'),
+      gradeSyncWord('sync-other-name-word', 'sync-valid', '另一人'),
+      gradeSyncWord('sync-other-class-word', 'sync-valid', '张同学', '26-城轨信号53班'),
+      gradeSyncWord('sync-foreign-project-word', undefined, '张同学', '26-城轨信号54班', { archive_binding: 'unverified', project_id: 'malaysia' }),
+      gradeSyncWord('sync-ambiguous-word', undefined, '不明班级学生', '54班', { archive_binding: 'unverified' }),
+    ],
+    [C.practiceAttempts]: [{ id: 'sync-rejected-quiz', project_id: PROJECT_ID, student_id: 'practice-rejected', access_request_id: 'sync-rejected', attempt_kind: 'quiz', task_id: 'q', task_title: 'Rejected quiz', unit: 'Unit 1', lesson: 'Lesson 1', score: 100, created_at: 10 }],
+  });
+  const view = await f.call('teacherDashboard', { token: f.tokens.july });
+  assert.equal(view.students.length, 1);
+  assert.equal(view.students[0].wordCount, 1);
+  assert.equal(view.students[0].wordAverage, 77);
+  assert.equal(view.students[0].quizCount, 0);
+  const detail = await f.call('teacherStudent', { token: f.tokens.july, studentId: view.students[0].id });
+  assert.deepEqual(detail.history.map(row => row.id), ['word:sync-valid-word']);
+});
+
+test('teacher grade sync does not duplicate evidence when a pending device becomes approved', async () => {
+  const f = fixture();
+  const owner = await f.authorize();
+  const task = (await f.call('saveTask', { token: f.tokens.july, task: quiz() })).task;
+  const pending = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班', practice: true });
+  await f.db.collection(LEGACY.words).doc('sync-approved-word').set(gradeSyncWord('sync-approved-word', pending.requestId));
+  await f.call('submitQuiz', { studentToken: pending.practiceToken, taskId: task.id, taskVersion: task.version, requestId: 'sync-approve-quiz-0001', answers: [0, 1] });
+  const before = await f.call('teacherDashboard', { token: f.tokens.july });
+  assert.equal(before.students.find(row => row.id === owner.studentId).historyCount, 2);
+  await f.call('approveAccess', { token: f.tokens.july, requestId: pending.requestId, approvalMode: 'classroom-confirmation', identityVerified: true });
+  const after = await f.call('teacherDashboard', { token: f.tokens.july });
+  const student = after.students.find(row => row.id === owner.studentId);
+  assert.equal(student.historyCount, 2);
+  assert.equal(student.wordCount, 1);
+  assert.equal(student.quizCount, 1);
+  const detail = await f.call('teacherStudent', { token: f.tokens.july, studentId: owner.studentId });
+  assert.equal(new Set(detail.history.map(row => row.id)).size, 2);
+  assert.equal(f.db.rows(C.practiceAttempts).length, 1);
+  assert.equal(f.db.rows(C.submissions).length, 0);
+});
+
+test('teacher grade sync preserves class ownership in every teacher view and overall class summaries', async () => {
+  const f = fixture({
+    [C.requests]: [gradeSyncRequest('sync-july'), gradeSyncRequest('sync-lisa', '林同学', '26-人工智能16班')],
+    [LEGACY.words]: [
+      gradeSyncWord('sync-july-word', 'sync-july', '张同学', '26-城轨信号54班', { average_score: 88 }),
+      gradeSyncWord('sync-lisa-word', 'sync-lisa', '林同学', '26-人工智能16班', { average_score: 75 }),
+    ],
+  });
+  assert.equal((await f.call('teacherCourseScores')).status, 401);
+  const all = await f.call('teacherDashboard', { token: f.tokens.july });
+  assert.equal(all.students.length, 2);
+  const lisa = await f.call('teacherDashboard', { token: f.tokens.lisa });
+  assert.deepEqual(lisa.students.map(row => row.name), ['林同学']);
+  assert.deepEqual((await f.call('teacherCourseScores', { token: f.tokens.lisa })).students.map(row => row.name), ['林同学']);
+  const outside = all.students.find(row => row.className === '26-城轨信号54班');
+  assert.equal((await f.call('teacherStudent', { token: f.tokens.lisa, studentId: outside.id })).status, 403);
+  const detail = await f.call('teacherStudent', { token: f.tokens.lisa, studentId: lisa.students[0].id });
+  assert.equal(detail.summary.wordAverage, 75);
+  const overview = await f.call('teacherOverview', { token: f.tokens.cherie });
+  const lisaSummary = overview.teachers.find(row => row.code === 'lisa');
+  assert.equal(lisaSummary.studentCount, 1);
+  assert.equal(lisaSummary.classes.find(row => row.className === '26-人工智能16班').wordAverage, 75);
+});
+
+test('teacher grade sync flags namesake student-number conflicts and stops pending grade attribution', async () => {
+  const pendingSpeaking = (id, requestId, number) => ({ id, project_id: PROJECT_ID, student_name: '张同学', class_name: '城轨信号2654', student_id: number, scene_id: 'club', total_score: 99, submitted_at: 20, archive_binding_version: 1, archive_binding: 'pending', archive_request_id: requestId });
+  const f = fixture({
+    [C.requests]: [gradeSyncRequest('sync-number-a'), gradeSyncRequest('sync-number-b')],
+    [LEGACY.words]: [word('sync-conflict-original', '张同学', '26-城轨信号54班', { average_score: 55 })],
+    [LEGACY.speaking]: [pendingSpeaking('sync-number-speaking-a', 'sync-number-a', '20260101'), pendingSpeaking('sync-number-speaking-b', 'sync-number-b', '20260102')],
+  });
+  const view = await f.call('teacherDashboard', { token: f.tokens.july });
+  assert.equal(view.students.length, 1);
+  assert.equal(view.students[0].identityConflict, true);
+  assert.equal(view.students[0].wordCount, 1);
+  assert.equal(view.students[0].speakingCount, 0);
+  const detail = await f.call('teacherStudent', { token: f.tokens.july, studentId: view.students[0].id });
+  assert.equal(detail.identityConflict, true);
+  assert.match(detail.warnings.join(' '), /不同学号/);
+  assert.deepEqual(detail.history.map(row => row.id), ['word:sync-conflict-original']);
+  assert.equal(f.db.rows(C.sessions).length, 0);
+});
+
+test('teacher grade sync is read-only, excludes unapproved profiles and never widens student history access', async () => {
+  const f = fixture({ [LEGACY.words]: [word('sync-private-original', '张同学', '26-城轨信号54班', { average_score: 55, course_unit: 'Unit 2', course_lesson: 'Lesson 1' })] });
+  const owner = await f.authorize();
+  const first = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班', practice: true });
+  const second = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班', practice: true });
+  await f.db.collection(LEGACY.words).doc('sync-private-first').set(gradeSyncWord('sync-private-first', first.requestId, '张同学', '26-城轨信号54班', { average_score: 95 }));
+  await f.db.collection(LEGACY.words).doc('sync-private-second').set(gradeSyncWord('sync-private-second', second.requestId, '张同学', '26-城轨信号54班', { average_score: 85 }));
+  await f.db.collection(LEGACY.profiles).doc('sync-private-profile').set(profile('sync-private-profile', '张同学', '26-城轨信号54班', { archive_binding_version: 1, archive_binding: 'pending', archive_request_id: first.requestId, learning_goals_json: '["PRIVATE-GOAL-MUST-NOT-AUTO-MERGE"]' }));
+  const protectedCollections = [...Object.values(LEGACY), C.students, C.requests, C.sessions, C.practiceSessions, C.practiceAttempts, C.submissions, C.unit2, C.reflections];
+  const before = new Map(protectedCollections.map(collection => [collection, f.db.rows(collection)]));
+  const writeIndex = f.db.writes.length;
+  const teacher = await f.call('teacherDashboard', { token: f.tokens.july });
+  assert.equal(teacher.students[0].wordCount, 3);
+  assert.equal(teacher.students[0].profile, null);
+  const detail = await f.call('teacherStudent', { token: f.tokens.july, studentId: owner.studentId });
+  assert.equal(detail.profile, null);
+  assert.equal(detail.history.some(row => row.type === 'profile'), false);
+  assert.equal(JSON.stringify(detail).includes('PRIVATE-GOAL-MUST-NOT-AUTO-MERGE'), false);
+  const own = await f.call('studentDashboard', { studentToken: owner.studentToken });
+  assert.deepEqual(own.history.map(row => row.id), ['word:sync-private-original']);
+  assert.equal((await f.call('courseStudentScores', { studentToken: owner.studentToken })).courseProgress.lessons[0].latest, 55);
+  assert.equal((await f.call('courseStudentScores', { studentToken: first.practiceToken })).courseProgress.lessons[0].latest, 95);
+  assert.equal((await f.call('courseStudentScores', { studentToken: second.practiceToken })).courseProgress.lessons[0].latest, 85);
+  assert.equal((await f.call('studentDashboard', { studentToken: first.practiceToken })).status, 401);
+  assert.equal((await f.call('teacherDashboard', { token: first.practiceToken })).status, 401);
+  for (const collection of protectedCollections) assert.deepEqual(f.db.rows(collection), before.get(collection), collection);
+  assert.equal(f.db.writes.slice(writeIndex).some(write => protectedCollections.includes(write.collection)), false);
+});
+
+test('teacher grade sync checks student numbers on approved pending bindings before adding a new claim', async () => {
+  const f = fixture();
+  const owner = await f.authorize();
+  const request = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班', practice: true });
+  for (const [id, requestId, studentNumber] of [['approved-speaking', owner.requestId, '20260101'], ['pending-speaking', request.requestId, '20260102']]) {
+    await f.db.collection(LEGACY.speaking).doc(id).set({ id, project_id: PROJECT_ID,
+      student_name: '张同学', class_name: '26-城轨信号54班', student_id: studentNumber,
+      scene_id: 'club', scene_title: 'Club', total_score: 85, submitted_at: 300,
+      archive_binding_version: 1, archive_binding: 'pending', archive_request_id: requestId });
+  }
+  const view = await f.call('teacherDashboard', { token: f.tokens.july });
+  assert.equal(view.students[0].identityConflict, true);
+  assert.equal(view.students[0].speakingCount, 1, 'Only the already confirmed evidence remains attributed');
+  assert.equal(view.gradeSync.autoAssociatedCount, 0);
+  assert.equal(view.gradeSync.needsReviewCount, 1);
+});

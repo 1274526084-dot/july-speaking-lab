@@ -648,7 +648,7 @@ export function CourseBoard({
             />
           </div>
           <p className="course-note">
-            变化只比较同一任务、同一评分版本。单词与口语为练习参考分，不代表能力等级；待确认记录不计入正式档案。
+            成绩按班级和姓名自动汇总，无需逐次录入。变化只比较同一任务、同一评分版本；单词与口语为练习参考分，平时成绩由任课教师评定。身份冲突须先核对。
           </p>
           <label className="course-check">
             <input

@@ -162,7 +162,7 @@ export function TeacherCourseScores({
           <div><TrendingUp /><strong>{score(overall.average)}</strong><span>课程最近均分</span></div>
         </div>
       </div>
-      <p className="tc-fair-note">总均分先汇总每名学生各课的最近成绩，再计算当前范围的均分；未提交的课次不按 0 分计算。练习分仅供教学反馈。</p>
+      <p className="tc-fair-note">成绩按班级和姓名自动汇总，无需逐次录入；同班同名且学号冲突时须先核对。总均分先汇总每名学生各课的最近成绩，再计算当前范围的均分，未提交的课次不按 0 分计算。练习分供任课教师评定平时成绩参考。</p>
       {feedError && <p className="tc-feed-error" role="status">{feedError}</p>}
 
       <section className="tc-panel tc-main-trend">
@@ -220,7 +220,7 @@ export function TeacherCourseScores({
         <div className="tc-table-heading"><div><h3>学生成绩</h3><p>点击学生，可看个人任务原文、录音与历史。</p></div><label><input type="checkbox" checked={showAll} onChange={(event) => setShowAll(event.target.checked)} />显示未提交学生（{students.length - activeRows.length}人）</label></div>
         {displayRows.length ? <div className="tc-table-wrap"><table><thead><tr><th>学生 / 班级</th><th>首次均分</th><th>最近均分</th><th>最好均分</th><th>复练变化</th><th>已得分任务</th><th>个人档案</th></tr></thead><tbody>
           {pageRows.map(({ student, result }) => <tr key={student.id}><td><strong>{student.name}</strong><small>{student.className}</small></td><td>{score(result?.first)}</td><td className="tc-score-strong">{score(result?.latest)}</td><td>{score(result?.best)}</td><td>{change(result?.change)}</td><td>{result?.items.length || 0} 项</td><td><button type="button" onClick={() => setChartStudentId(student.id)}>看变化</button><button type="button" onClick={() => onStudent(student.id)}>查看档案 <ArrowRight /></button></td></tr>)}
-        </tbody></table></div> : <p className="tc-empty">当前筛选范围内，这节课还没有正式成绩。可勾选右上角查看未提交学生。</p>}
+        </tbody></table></div> : <p className="tc-empty">当前筛选范围内，这节课还没有练习成绩。可勾选右上角查看未提交学生。</p>}
         {displayRows.length > 20 && <div className="tc-pagination"><span>第 {Math.min(page, pageCount)} / {pageCount} 页</span><button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页</button><button type="button" disabled={page >= pageCount} onClick={() => setPage(page + 1)}>下一页</button></div>}
       </section>
     </section>

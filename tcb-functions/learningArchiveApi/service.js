@@ -6,6 +6,7 @@ const { DEFAULT_ASSIGNMENTS, DISPLAY_NAMES } = require('./class-ownership');
 const { gradeUnit2, unit2Summary } = require('./unit2');
 const { gradeLesson3 } = require('./lesson3');
 const { position, courseCatalog, lessonProgress } = require('./course');
+const { projectTeacherGrades } = require('./teacher-grades');
 
 const PROJECT_ID = 'lzrtc-public-english-2026';
 const TEACHERS = new Set(['cherie', 'lisa', 'alice', 'july']);
@@ -297,13 +298,13 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     } else if (previous.student_id !== auth.student.id) fail(409, '此提交编号不属于本人，不能修改他人的成绩。');
     return previous;
   }
-  async function datasets() {
+  async function datasets({ teacherGrades = false } = {}) {
     const startedAt = Date.now();
     const names = ['profiles', 'words', 'speaking', 'students', 'reflections', 'submissions', 'tasks', 'news', 'unit2', 'practiceAttempts'];
     const [result, wordUnits, approvedRequests, mappingScan] = await Promise.all([
       Promise.all(names.map(key => read(LEGACY[key] || COLLECTIONS[key], LEGACY[key] ? {} : { project_id: PROJECT_ID }, Boolean(LEGACY[key])))),
       read('word_units', {}, true),
-      read(COLLECTIONS.requests, { project_id: PROJECT_ID, status: 'approved' }),
+      read(COLLECTIONS.requests, { project_id: PROJECT_ID, ...(teacherGrades ? {} : { status: 'approved' }) }),
       read(COLLECTIONS.classNormalization, { project_id: PROJECT_ID }),
     ]);
     const data = { hasMore: result.some(item => item.hasMore), incompleteCollections: names.filter((_, i) => result[i].hasMore), scans: Object.fromEntries(names.map((key, index) => [key, { scanned: result[index].rows.length, total: result[index].totalCount, pages: result[index].pages, elapsedMs: result[index].elapsedMs }])) };
@@ -318,7 +319,8 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     }
     names.forEach((key, index) => { data[key] = LEGACY[key] ? result[index].rows.filter(row => scoped(row, key) && (key !== 'words' || row.status === 'completed')).map(row => rosterView(row, LEGACY[key])) : result[index].rows.filter(tagged).map(row => key === 'students' ? rosterView(row, COLLECTIONS.students, true) : row); });
     if (mappingScan.hasMore) { data.hasMore = true; data.incompleteCollections.push('classNormalization'); }
-    const approved = new Map(approvedRequests.rows.filter(tagged).map(row => [row.id, row.student_id]));
+    const approved = new Map(approvedRequests.rows.filter(row => tagged(row) && row.status === 'approved').map(row => [row.id, row.student_id]));
+    const projection = teacherGrades ? projectTeacherGrades({ data, requests: approvedRequests.rows, catalog: CLASS_CATALOG, projectId: PROJECT_ID, normalizeName, candidateId }) : null;
     const owners = new Set(data.students.map(student => student.id));
     // Never merge new unverified submissions by a public name/class label.
     // Preserve old rows unchanged, while new evidence needs explicit ownership.
@@ -336,6 +338,11 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
         if (row.attempt_kind === 'unit2') data.unit2.push(view);
         if (row.attempt_kind === 'quiz') data.submissions.push(view);
       }
+    }
+    if (projection) {
+      for (const kind of ['words', 'speaking', 'submissions', 'unit2']) data[kind].push(...projection.records[kind]);
+      data.students.push(...projection.students);
+      data.teacherGradeProjection = projection;
     }
     if (approvedRequests.hasMore) { data.hasMore = true; data.incompleteCollections.push('approvedRequests'); }
     // Read only the same domestic units accepted by wordLab. No unit or audio is rewritten.
@@ -366,7 +373,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
           data.identities.set(key, bucket);
         }
         bucket[kind].push(row);
-        if (kind === 'speaking' && !row.archive_binding_version) {
+        if (kind === 'speaking' && (!row.archive_binding_version || teacherGrades)) {
           const studentNumber = normalizeName(row.student_id);
           if (studentNumber) bucket.studentNumbers.add(studentNumber);
         }
@@ -414,7 +421,14 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     // speakingLab's student_id is the student-entered 学号, not an attempt ID.
     // Multiple IDs for one name/class may be a namesake or a typo; neither is
     // sufficient evidence to grant access to a combined legacy archive.
-    return (identityFor(student, data)?.studentNumbers.size || 0) > 1;
+    return Boolean(data.teacherGradeProjection?.conflicts.has(student.id)) || (identityFor(student, data)?.studentNumbers.size || 0) > 1;
+  }
+  function teacherGradeSync(data, visible) {
+    const projection = data.teacherGradeProjection;
+    return { mode: 'class-name',
+      autoAssociatedCount: (projection?.associated || []).filter(row => visible(row.className)).length,
+      needsReviewCount: (projection?.review || []).filter(row => visible(row.className)).length,
+    };
   }
   function assigned(task, student, data) {
     return !task.classes?.length || task.classes.some(className => {
@@ -464,6 +478,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     const quizzes = archiveRows('submissions', student, data), reflections = archiveRows('reflections', student, data);
     const unit2 = archiveRows('unit2', student, data);
     return {
+      autoAssociatedCount: data.teacherGradeProjection?.counts.get(student.id) || 0,
       courseProgress: courseProgressFor(student, data),
       unit2: unit2Summary(unit2),
       historyCount: words.length + speaking.length + profiles.length + quizzes.length + unit2.length,
@@ -483,8 +498,9 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     output.unit2 = unit2;
     output.courseProgress = courseProgressFor(student, data);
     if (isTeacher) {
+      output.gradeSync = teacherGradeSync(data, className => className === publicStudent(student).className);
       output.identityConflict = identityConflict(student, data);
-      if (output.identityConflict) output.warnings.push('同班同名记录出现不同学号，学生访问已暂停。请先核对原始记录；系统不会猜测或合并身份。');
+      if (output.identityConflict) output.warnings.push('同班同名记录出现不同学号，相关自填成绩暂未自动归并。请核对原始记录；系统不会猜测学生身份。');
       const devices = await read(COLLECTIONS.sessions, { project_id: PROJECT_ID, student_id: student.id });
       output.devices = devices.rows.map(row => ({ id: row.id, createdAt: row.created_at, expiresAt: row.expires_at, revokedAt: row.revoked_at || null, approvedBy: row.approved_by, active: !row.revoked_at && row.expires_at > now() }));
       output.hasMore ||= devices.hasMore;
@@ -836,10 +852,11 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     }
     const teacherStartedAt = Date.now();
     const [data, requestScan] = await Promise.all([
-      datasets(), action === 'teacherDashboard' ? read(COLLECTIONS.requests, { project_id: PROJECT_ID }) : Promise.resolve(null),
+      datasets({ teacherGrades: ['teacherDashboard', 'teacherStudent', 'teacherCourseScores', 'teacherOverview'].includes(action) }), action === 'teacherDashboard' ? read(COLLECTIONS.requests, { project_id: PROJECT_ID }) : Promise.resolve(null),
     ]);
     const students = allStudents(data);
     const ownStudents = [...students.values()].filter(student => teacherCanSee(staff, publicStudent(student).className, assignments));
+    const gradeSync = teacherGradeSync(data, className => teacherCanSee(staff, className, assignments));
     if (action === 'teacherOverview') {
       const summary = Object.entries(assignments).map(([code, classes]) => {
         const groups = classes.map(className => {
@@ -851,12 +868,13 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       });
       return { teachers: summary, unassignedClassCount: CLASS_CATALOG.filter(label => label !== '默认班级（测试）' && !Object.values(assignments).some(list => list.includes(label))).length, hasMore: data.hasMore, canEdit: staff.code === 'july', assignments };
     }
-    if (action === 'teacherCourseScores') return { students: ownStudents.map(student => ({ ...publicStudent(student), courseProgress: courseProgressFor(student, data) })), hasMore: data.hasMore };
+    if (action === 'teacherCourseScores') return { students: ownStudents.map(student => ({ ...publicStudent(student), identityConflict: identityConflict(student, data), courseProgress: courseProgressFor(student, data) })), gradeSync, hasMore: data.hasMore };
     if (action === 'teacherDashboard') {
       const requests = requestScan;
       const includeProfiles = staff.code === 'july';
       const result = { teacher: teacherView(staff, assignments), students: ownStudents.map(student => ({ ...publicStudent(student), ambiguous: Boolean(student.ambiguous), identityConflict: identityConflict(student, data), profile: includeProfiles ? publicProfile(profileFor(student, data)) : null, profileRestricted: !includeProfiles, ...studentSummary(student, data, includeProfiles) })).sort((a, b) => b.lastActive - a.lastActive || a.className.localeCompare(b.className, 'zh-CN')), tasks: data.tasks.map(row => publicTask(row, true)).sort((a, b) => b.updatedAt - a.updatedAt), news: data.news.map(publicNews).sort((a, b) => b.updatedAt - a.updatedAt), requests: requests.rows.filter(row => teacherCanSee(staff, row.class_name, assignments)).map(row => publicRequest(row, now())).sort((a, b) => b.createdAt - a.createdAt), profileRestricted: !includeProfiles, hasMore: data.hasMore || requests.hasMore, warnings: data.hasMore || requests.hasMore ? ['记录数量超过本次读取上限，显示结果可能不完整，请联系管理员分批导出。'] : [] };
       result.returnedRecordCounts = { ...Object.fromEntries(Object.keys(data.scans).map(key => [key, data[key].length])), requests: requests.rows.length };
+      result.gradeSync = gradeSync;
       result.scannedRecordCounts = { ...Object.fromEntries(Object.entries(data.scans).map(([key, value]) => [key, value.scanned])), requests: requests.rows.length };
       result.collectionTotals = { ...Object.fromEntries(Object.entries(data.scans).map(([key, value]) => [key, value.total])), requests: requests.totalCount };
       result.scanPages = { ...Object.fromEntries(Object.entries(data.scans).map(([key, value]) => [key, value.pages])), requests: requests.pages };

@@ -95,7 +95,7 @@ export function ClassroomAccess({
     if (
       !window.confirm(
         approve
-          ? `请本人展示申请页面，核对本机标记 ${row.id.slice(-8)}。\n确认 ${row.className} 的 ${row.name} 是本人及此设备申请？\n确认后才关联本次记录，并允许此设备查看本人档案。不能仅凭姓名、班级就批准。`
+          ? `请本人展示申请页面，核对本机标记 ${row.id.slice(-8)}。\n确认 ${row.className} 的 ${row.name} 是本人及此设备申请？\n成绩已按班级和姓名自动汇总；此操作允许该设备查看本人历史档案。不能仅凭姓名、班级就批准。`
           : `拒绝 ${row.name} 的本次申请？`,
       )
     )
@@ -122,7 +122,7 @@ export function ClassroomAccess({
       setRequests((previous) => previous.filter((item) => item.id !== row.id));
       setNotice(
         approve
-          ? `已确认 ${row.name}，本次记录已关联；此设备可进入本人档案。`
+          ? `已确认 ${row.name} 的设备，可查看本人历史档案；成绩无需手动录入。`
           : `已拒绝 ${row.name} 的本次申请。`,
       );
       onChanged?.();
@@ -145,7 +145,7 @@ export function ClassroomAccess({
     }
     if (
       !window.confirm(
-        `以下 ${rows.length} 位学生都已逐一核对本人和本机申请标记吗？\n${rows.map((row) => `${row.className} ${row.name} · ${row.id.slice(-8)}`).join('\n')}\n未经本人及设备核对不要批准；确认后才关联正式档案。`,
+        `以下 ${rows.length} 位学生都已逐一核对本人和本机申请标记吗？\n${rows.map((row) => `${row.className} ${row.name} · ${row.id.slice(-8)}`).join('\n')}\n成绩已自动汇总，此操作仅授权设备查看本人历史档案。未经本人及设备核对不要批准。`,
       )
     )
       return;
@@ -168,7 +168,7 @@ export function ClassroomAccess({
         );
         done.push(row.id);
       }
-      setNotice(`已确认 ${done.length} 位学生，本次记录已关联。`);
+      setNotice(`已确认 ${done.length} 位学生的设备，可查看本人历史档案。`);
     } catch (err) {
       setError(
         `已确认 ${done.length} 人；其余未批准。${err instanceof Error ? err.message : '请重试'}`,
@@ -184,17 +184,17 @@ export function ClassroomAccess({
     }
   }
   return (
-    <section className="classroom-access" aria-label="学生进入申请">
+    <section className="classroom-access" aria-label="学生历史档案设备申请">
       <header>
         <div>
           <UserCheck size={21} />
-          <strong>学生进入申请</strong>
+          <strong>历史档案设备申请</strong>
           <span className={requests.length ? 'has-pending' : ''}>
             {loaded ? `${requests.length}人待确认` : '正在连接'}
           </span>
         </div>
         <div>
-          <button onClick={() => void load()} aria-label="刷新学生进入申请">
+          <button onClick={() => void load()} aria-label="刷新历史档案设备申请">
             <RefreshCw size={16} />
           </button>
           <button
@@ -206,8 +206,7 @@ export function ClassroomAccess({
         </div>
       </header>
       <p className="classroom-access-hint">
-        学生先做任务 · 教师课后核对本人和设备，再确认归档 ·
-        每5秒更新，不用输数字。
+        练习成绩按班级和姓名自动汇总，无需逐次录入。此处仅核对设备查看本人历史档案的权限，每5秒更新。
       </p>
       {notice && <output className="classroom-access-success">{notice}</output>}
       {error && (
@@ -308,7 +307,7 @@ export function ClassroomAccess({
                   <strong>同名同班有多份申请，请核对本机标记后单独确认</strong>
                 )}
                 <span>
-                  本次已提交 {row.practiceCount || 0} 份记录 · 尚未关联正式档案
+                  本次已提交 {row.practiceCount || 0} 份记录 · 此设备的历史档案权限待确认
                 </span>
                 {Boolean(row.practiceScores?.length) && (
                   <details>
@@ -339,7 +338,7 @@ export function ClassroomAccess({
                   onClick={() => void decide(row, true)}
                 >
                   <Check size={16} />
-                  {busy === row.id ? '处理中…' : '确认归档'}
+                  {busy === row.id ? '处理中…' : '允许查看本人档案'}
                 </button>
               </div>
             </article>

@@ -1,6 +1,7 @@
 import { BookOpenCheck, Headphones, UserRound, BarChart3 } from 'lucide-react';
 import { sitePath } from './api';
 import { CourseBoard } from './course-board';
+import { StudentGradeNotice } from '@/components/student-grade-notice';
 
 export function LearningHub() {
   return (
@@ -41,6 +42,7 @@ export function LearningHub() {
             </a>
           ))}
         </div>
+        <StudentGradeNotice />
         <CourseBoard />
         <footer className="py-4 text-center text-xs text-[#87917d]">
           柳州铁道职业技术学院 · 英语成长档案

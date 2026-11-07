@@ -18,6 +18,7 @@ import {
 import { getAdaptiveReply } from '@/lib/adaptive-reply';
 import { scenes, type PracticeTurn, type SceneId } from '@/lib/scenes';
 import { StudentClassField } from '@/components/student-class-field';
+import { StudentGradeNotice } from '@/components/student-grade-notice';
 import { ensureCoursePractice } from '@/mainland/src/classroom-identity';
 import {
   getCourseStudent,
@@ -1097,6 +1098,7 @@ export function SpeakingLab({
                   Step 2 · Student Information
                 </p>
                 <h1 className="serif mt-1 text-2xl font-bold">填写信息</h1>
+                <StudentGradeNotice />
                 <div className="mt-4 grid gap-3">
                   {[
                     ['name', '姓名', '张丽'],
@@ -1135,7 +1137,7 @@ export function SpeakingLab({
                     className="mt-1 h-4 w-4"
                   />
                   <span>
-                    我同意将本次三段回答录音发送至本课程使用的腾讯云语音识别服务进行转写，并将录音、识别文字和评分保存到教师端，仅用于课程反馈。
+                    我同意将本次三段回答录音发送至本课程使用的腾讯云语音识别服务进行转写，并将录音、识别文字和评分保存到教师端，用于本课程反馈及平时成绩评定参考。
                   </span>
                 </label>
               </div>

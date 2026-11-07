@@ -14,6 +14,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import { StudentClassField } from '@/components/student-class-field';
+import { StudentGradeNotice } from '@/components/student-grade-notice';
 import { sitePath } from './api';
 import { SKILL_LABELS } from './profile-api';
 import {
@@ -506,6 +507,7 @@ export function ArchiveStudent() {
             </nav>
           </section>
           <section className="archive-access archive-rail-ticket">
+            <StudentGradeNotice />
             {pending ? (
               <>
                 <span className="archive-step">申请已发送</span>
@@ -516,7 +518,7 @@ export function ArchiveStudent() {
                   班级：{pending.className}
                 </p>
                 <p>
-                  不用等待老师，连接后即可开始。老师课后确认身份，再关联个人档案。
+                  连接后即可开始，成绩会自动汇总给任课教师。查看个人历史档案仍需老师核对本人和此设备。
                 </p>
                 <div className="archive-existing">
                   <strong>等待时也能先练习</strong>
@@ -584,7 +586,7 @@ export function ArchiveStudent() {
                     checked={consent}
                     onChange={(event) => setConsent(event.target.checked)}
                   />
-                  我同意本人及授权教师查看我的学习记录
+                  我同意本人及授权教师查看我的学习记录，用于本课程反馈及平时成绩评定参考
                 </label>
                 <button
                   className="archive-primary"
@@ -601,7 +603,7 @@ export function ArchiveStudent() {
                     首次登录 / 换设备说明
                   </summary>
                   <p>
-                    填姓名、选班级即可先做任务；教师课后确认后可查看历史档案，不用密码。手机丢失可请老师撤销旧设备。
+                    每节课填一次姓名、选好班级即可做任务，成绩自动汇总给任课教师；查看历史档案需老师确认本人和此设备。手机丢失可请老师撤销旧设备。
                   </p>
                   <p>
                     勾选“记住我”仅适用于私人设备，有效期30天。公共电脑请勿勾选。记录仅供本人及授权教师查看。
@@ -650,7 +652,7 @@ export function ArchiveStudent() {
             </button>
           </div>
           <p className="archive-small">
-            提交后，成绩由服务器保存。此处只显示本次课堂身份的成绩；历史档案需老师确认，不会覆盖原记录。
+            提交后，成绩按班级和姓名自动汇总给任课教师。此处只显示本次课堂身份的成绩；查看历史档案仍需老师确认本人和此设备。
           </p>
           {pending.requestId && (
             <details className="archive-small">

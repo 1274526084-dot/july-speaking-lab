@@ -109,6 +109,7 @@ type Student = {
   profile?: Partial<EnglishProfile> | null;
   profileRestricted?: boolean;
   identityConflict?: boolean;
+  autoAssociatedCount?: number;
   ambiguous?: boolean;
   historyCount?: number;
   wordAverage?: number | null;
@@ -193,7 +194,14 @@ type History = {
     }[];
   };
 };
+type GradeSync = {
+  mode: 'class-name';
+  autoAssociatedCount: number;
+  needsReviewCount: number;
+};
+
 type StudentDetail = {
+  gradeSync?: GradeSync;
   courseProgress?: CourseProgress;
   unit2?: Unit2Summary;
   student?: Student;
@@ -219,6 +227,7 @@ type StudentDetail = {
   warnings?: string[];
 };
 type Dashboard = {
+  gradeSync?: GradeSync;
   teacher?: { code: string; name: string; assignedClasses: string[]; canManageCourse: boolean };
   students: Student[];
   tasks: ArchiveTask[];
@@ -706,6 +715,12 @@ export function ArchiveTeacher() {
         {data.warnings?.map((warning, index) => (
           <Notice key={index}>{warning}</Notice>
         ))}
+        {data.gradeSync && data.gradeSync.needsReviewCount > 0 && (
+          <Notice danger>
+            <ShieldCheck />
+            有{data.gradeSync.needsReviewCount}条成绩因同班同名学号冲突或班级不明确暂未自动归并，请核对；原始记录仍保留。
+          </Notice>
+        )}
         {data.hasMore && (
           <Notice danger>
             <ShieldCheck />
@@ -777,7 +792,7 @@ export function ArchiveTeacher() {
                   <div>
                     <p className="at-eyebrow">01 / CLASS ARCHIVE</p>
                     <h2>班级里的每一个人</h2>
-                    <p>合并班级的常见写法；原始填写和原模块记录继续保留。</p>
+                    <p>成绩按班级和姓名自动汇总，无需逐次录入；原始填写和原模块记录继续保留。</p>
                   </div>
                   <span className="at-pill">{students.length} 份档案</span>
                 </section>
@@ -931,6 +946,11 @@ export function ArchiveTeacher() {
                                         同班同名身份冲突 · 待核对学号
                                       </span>
                                     )}
+                                    {Boolean(student.autoAssociatedCount) && (
+                                      <small title="按学生填写的班级和姓名关联，不代表本人身份已核验">
+                                        含学生自填身份记录
+                                      </small>
+                                    )}
                                     <small>
                                       {
                                         directory.resolve(classRow(student))
@@ -985,7 +1005,7 @@ export function ArchiveTeacher() {
                     >
                       {data.students.length
                         ? '试试班级简称或清除筛选条件。'
-                        : '学生建立档案并获得教师确认后，学习记录会显示在这里。'}
+                        : '学生使用本人姓名和正确班级完成任务后，学习记录会自动汇总到这里。'}
                     </Empty>
                   )}
                 </section>
@@ -1135,7 +1155,7 @@ export function ArchiveTeacher() {
                   <div>
                     <p className="at-eyebrow">04 / TRUSTED ACCESS</p>
                     <h2>学生进入申请</h2>
-                    <p>学生先完成任务，课后核对本人和申请设备，再确认归档。</p>
+                    <p>成绩已按班级和姓名自动汇总，无需逐次录入。此处仅核对本人及设备，授权学生查看自己的历史档案。</p>
                   </div>
                   <span className="at-pill">{pending.length} 项待确认</span>
                 </section>
@@ -1317,10 +1337,21 @@ function StudentDialog({
             {warning}
           </Notice>
         ))}
+        {detail?.gradeSync && detail.gradeSync.needsReviewCount > 0 && (
+          <Notice danger>
+            <ShieldCheck />
+            有{detail.gradeSync.needsReviewCount}条成绩因同班同名学号冲突或班级不明确暂未自动归并，请核对；原始记录仍保留。
+          </Notice>
+        )}
+        {Boolean(detail?.gradeSync?.autoAssociatedCount || student.autoAssociatedCount) && (
+          <Notice>
+            含学生自填身份记录：成绩按填写的班级和姓名自动关联，不代表本人身份已核验，供任课教师核对和评定参考。
+          </Notice>
+        )}
         {(detail?.identityConflict || student.identityConflict) && (
           <Notice danger>
             <ShieldCheck />
-            身份待核验：同班同名记录涉及不同学号。以下历史仅供教师核对，不能据此确认属于同一学生；学生访问与设备批准已暂停，请先核对原始记录。
+            身份待核验：同班同名记录涉及不同学号。相关自填成绩暂未自动归并，以下历史仅供教师核对；请先核对原始记录，再处理设备授权。
           </Notice>
         )}
         {detail?.hasMore && (
