@@ -43,7 +43,7 @@ import {
   studentReturnUrl,
 } from './course-session';
 import { Unit2Panel } from './unit2-panel';
-import { CourseBoard } from './course-board';
+import { CourseBoard, courseLessonNumber } from './course-board';
 import { CourseTrendChart } from './course-charts';
 
 const skillKeys = Object.keys(SKILL_LABELS) as Array<keyof typeof SKILL_LABELS>;
@@ -857,7 +857,7 @@ export function ArchiveStudent() {
                   label={`${data.student.name}的每课成绩变化`}
                   points={[...(data.courseProgress?.lessons || [])]
                     .sort((a, b) => a.unit - b.unit || a.lesson - b.lesson)
-                    .map((row) => ({ label: `${row.unit}-${row.lesson}`, first: row.first, latest: row.latest }))}
+                    .map((row) => ({ label: `第${courseLessonNumber(row.unit, row.lesson)}课`, first: row.first, latest: row.latest }))}
                 />
               </section>
               <CourseBoard
@@ -964,6 +964,7 @@ function Portfolio({ records }: { records: ArchiveHistory[] }) {
             <option value="quiz">课堂小测</option>
             <option value="unit2">第二课测试与写作</option>
             <option value="lesson3">第三课词组与阅读</option>
+            <option value="lesson6">Unit 2 第6课词汇匹配</option>
             <option value="profile">学情调查</option>
           </select>
         </label>
@@ -983,6 +984,7 @@ function Portfolio({ records }: { records: ArchiveHistory[] }) {
                     quiz: '课堂小测',
                     unit2: '第二课',
                     lesson3: '第三课',
+                    lesson6: 'Unit 2 第6课',
                     profile: '学情调查',
                   }[row.type] || '学习记录'}
                 </span>
@@ -1011,6 +1013,7 @@ function Portfolio({ records }: { records: ArchiveHistory[] }) {
             {row.type !== 'profile' &&
               row.type !== 'unit2' &&
               row.type !== 'lesson3' &&
+              row.type !== 'lesson6' &&
               !row.audio?.length &&
               row.type !== 'quiz' && (
                 <p className="archive-small">
@@ -1066,7 +1069,7 @@ function RecordFeedback({ row }: { row: ArchiveHistory }) {
   )
     return null;
   const detail = row.details as RecordFeedbackDetails;
-  if (row.type === 'unit2' || row.type === 'lesson3') {
+  if (row.type === 'unit2' || row.type === 'lesson3' || row.type === 'lesson6') {
     const content = row.details as {
       essay?: string;
       feedback?: {

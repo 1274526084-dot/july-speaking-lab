@@ -7,15 +7,24 @@ function position(unit, lesson) {
   const u = number(unit), l = number(lesson);
   return u >= 1 && u <= 30 && l >= 1 && l <= 3 ? { unit: u, lesson: l } : null;
 }
+function courseLessons(unit, lessons) {
+  const valid = Array.isArray(lessons) ? [...new Set(lessons.filter(value => Number.isInteger(value) && value >= 1 && value <= 3))].sort((a, b) => a - b) : [];
+  return valid.length ? valid : Number(unit) === 2 ? [3] : [1, 2, 3];
+}
 function courseCatalog(rows, tasks = []) {
-  const units = new Map([[1, { number: 1, title: '校园与学习', lessons: [1, 2, 3] }]]);
-  for (const row of rows.filter(row => row.kind === 'unit')) units.set(row.number, { number: row.number, title: row.title, lessons: [1, 2, 3], creatorName: row.creator_name });
+  const units = new Map([
+    [1, { number: 1, title: '校园与学习', lessons: [1, 2, 3] }],
+    [2, { number: 2, title: '时间与人生', lessons: [3] }],
+  ]);
+  for (const row of rows.filter(row => row.kind === 'unit')) units.set(row.number, { number: row.number, title: row.title, lessons: courseLessons(row.number, row.lessons), creatorName: row.creator_name });
   for (const task of tasks) {
     const at = position(task.unit, task.lesson);
-    if (at && !units.has(at.unit)) units.set(at.unit, { number: at.unit, title: '', lessons: [1, 2, 3] });
+    if (at && !units.has(at.unit)) units.set(at.unit, { number: at.unit, title: '', lessons: courseLessons(at.unit) });
   }
   const current = rows.find(row => row.kind === 'current');
-  return { units: [...units.values()].sort((a, b) => a.number - b.number), current: current ? { unit: current.unit, lesson: current.lesson } : { unit: 1, lesson: 2 } };
+  const currentUnit = current && units.get(current.unit);
+  const currentLesson = currentUnit && courseLessons(current.unit, currentUnit.lessons);
+  return { units: [...units.values()].sort((a, b) => a.number - b.number), current: current && currentLesson ? { unit: current.unit, lesson: currentLesson.includes(current.lesson) ? current.lesson : currentLesson[0] } : { unit: 1, lesson: 2 } };
 }
 function lessonProgress({ speaking = [], words = [], wordUnits = [], unit2 = [], quizzes = [], tasks = [] }) {
   const buckets = new Map(); let unassignedWordCount = 0;
@@ -63,4 +72,4 @@ function lessonProgress({ speaking = [], words = [], wordUnits = [], unit2 = [],
     return { unit: bucket.unit, lesson: bucket.lesson, items, first: mean(items.map(item => item.first)), latest: mean(items.map(item => item.latest)), best: mean(items.map(item => item.best)), change: mean(paired.map(item => item.change)), comparableTasks: paired.length, attempts: items.reduce((sum, item) => sum + item.attempts, 0) };
   }).sort((a, b) => a.unit - b.unit || a.lesson - b.lesson), unassignedWordCount };
 }
-module.exports = { position, courseCatalog, lessonProgress };
+module.exports = { position, courseCatalog, courseLessons, lessonProgress };

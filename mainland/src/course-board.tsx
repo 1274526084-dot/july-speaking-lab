@@ -96,7 +96,24 @@ export const BUILTIN_COURSE_TASKS: ArchiveTask[] = [
     description: '',
     href: `/july-Englishclass/${file}`,
   })),
+  {
+    id: 'builtin-lesson6-matching',
+    title: '词汇与词组匹配 · B级阅读 Task 4',
+    unit: 'Unit 2',
+    lesson: 'Lesson 3',
+    type: 'link',
+    href: '/july-Englishclass/lesson-6-vocabulary-matching.html',
+    description: '16个英文选项，5道双空题；提交后成绩自动同步',
+  },
 ];
+export const courseLessonNumber = (unit: number, lesson: number) =>
+  (unit - 1) * 3 + lesson;
+export function availableCourseLessons(unit: number, lessons?: number[]) {
+  const valid = Array.isArray(lessons)
+    ? [...new Set(lessons.filter((value) => Number.isInteger(value) && value >= 1 && value <= 3))].sort((a, b) => a - b)
+    : [];
+  return valid.length ? valid : unit === 2 ? [3] : [1, 2, 3];
+}
 const coordinate = (value: string) => Number(value.match(/\d+/)?.[0] || 0);
 const mark = (value?: number | null) => (value == null ? '—' : `${value}分`);
 const delta = (value?: number | null) =>
@@ -193,7 +210,10 @@ export function CourseBoard({
   revision?: number;
 }) {
   const [feed, setFeed] = useState<CourseFeed>({
-    units: [{ number: 1, title: '校园与学习', lessons: [1, 2, 3] }],
+    units: [
+      { number: 1, title: '校园与学习', lessons: [1, 2, 3] },
+      { number: 2, title: '时间与人生', lessons: [3] },
+    ],
     current: { unit: 1, lesson: 2 },
     tasks: [],
   });
@@ -259,6 +279,7 @@ export function CourseBoard({
         ...result,
         units: result.units || [
           { number: 1, title: '校园与学习', lessons: [1, 2, 3] },
+          { number: 2, title: '时间与人生', lessons: [3] },
         ],
         current: result.current || { unit: 1, lesson: 2 },
         tasks: result.tasks || [],
@@ -276,8 +297,15 @@ export function CourseBoard({
     return () => clearInterval(timer);
   }, [load, revision]);
   const displayedUnit = chosen || params.has('unit') ? unit : feed.current.unit;
-  const displayedLesson =
+  const lessonNumbers = availableCourseLessons(
+    displayedUnit,
+    feed.units.find((item) => item.number === displayedUnit)?.lessons,
+  );
+  const requestedLesson =
     chosen || params.has('lesson') ? lesson : feed.current.lesson;
+  const displayedLesson = lessonNumbers.includes(requestedLesson)
+    ? requestedLesson
+    : lessonNumbers[0];
   const scoreLoad = useCallback(async () => {
     if (teacher && view !== 'scores') return;
     const token = teacher
@@ -378,17 +406,17 @@ export function CourseBoard({
     setSaving(true);
     setError('');
     try {
-      await archiveRequest(
+      const result = await archiveRequest<{ unit?: Unit }>(
         'saveCourseUnit',
         { number: newNumber, title },
         getTeacherToken(),
       );
       await load();
       setUnit(newNumber);
-      setLesson(1);
+      setLesson(availableCourseLessons(newNumber, result.unit?.lessons)[0]);
       setChosen(true);
       setUnitForm(false);
-      setMessage(`Unit ${newNumber}已保存，3课已建立`);
+      setMessage(`Unit ${newNumber}已保存，可用课次已更新`);
     } catch (err) {
       setError(err instanceof Error ? err.message : '单元保存失败');
     } finally {
@@ -429,9 +457,9 @@ export function CourseBoard({
     <section className="course-board">
       <div className="course-top">
         <div>
-          <p className="course-kicker">每个 Unit · 3课</p>
+          <p className="course-kicker">按实际教学课次记录任务与成绩</p>
           <h2>
-            Unit {displayedUnit} · 第{displayedLesson}课
+            Unit {displayedUnit} · 第{courseLessonNumber(displayedUnit, displayedLesson)}课
           </h2>
         </div>
         {teacher ? (
@@ -450,7 +478,7 @@ export function CourseBoard({
           </button>
         ) : (
           <span className="course-current">
-            当前：Unit {feed.current.unit} · 第{feed.current.lesson}课
+            当前：Unit {feed.current.unit} · 第{courseLessonNumber(feed.current.unit, feed.current.lesson)}课
           </span>
         )}
       </div>
@@ -460,8 +488,9 @@ export function CourseBoard({
           <select
             value={displayedUnit}
             onChange={(event) => {
-              setUnit(Number(event.target.value));
-              setLesson(1);
+              const nextUnit = Number(event.target.value);
+              setUnit(nextUnit);
+              setLesson(availableCourseLessons(nextUnit, feed.units.find((item) => item.number === nextUnit)?.lessons)[0]);
               setChosen(true);
             }}
           >
@@ -474,7 +503,7 @@ export function CourseBoard({
           </select>
         </label>
         <div className="course-lessons" aria-label="选择课次">
-          {[1, 2, 3].map((value) => {
+          {lessonNumbers.map((value) => {
             const grade = (progress || personal)?.lessons.find(
               (item) => item.unit === displayedUnit && item.lesson === value,
             );
@@ -489,7 +518,7 @@ export function CourseBoard({
                   setChosen(true);
                 }}
               >
-                <span>第{value}课</span>
+                <span>第{courseLessonNumber(displayedUnit, value)}课</span>
                 <small>
                   {
                     allTasks.filter(
@@ -761,7 +790,7 @@ export function CourseBoard({
                 placeholder="如：Campus Life"
               />
             </label>
-            <p>保存后自动建立第1、2、3课。</p>
+            <p>保存后建立该单元的可用课次；已跳过的课次不会补建任务。</p>
             {error && (
               <p role="alert" className="course-error">
                 {error}

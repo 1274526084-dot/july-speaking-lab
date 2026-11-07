@@ -50,7 +50,7 @@ import { RAILWAY_NEWS_SEEDS } from '@/lib/railway-news';
 import { getTeacherToken, sitePath } from './api';
 import { ArchiveError, archiveRequest, type Unit2Summary } from './archive-api';
 import { Unit2Panel } from './unit2-panel';
-import { CourseBoard, type CourseProgress } from './course-board';
+import { CourseBoard, courseLessonNumber, availableCourseLessons, type CourseProgress } from './course-board';
 import { TeacherCourseScores } from './teacher-course-scores';
 import { CourseTrendChart } from './course-charts';
 import { ClassroomAccess } from './classroom-access';
@@ -1421,7 +1421,7 @@ function StudentDialog({
                 label={`${student.name}的每课成绩变化`}
                 points={[...((detail?.courseProgress || student.courseProgress)?.lessons || [])]
                   .sort((a, b) => a.unit - b.unit || a.lesson - b.lesson)
-                  .map((row) => ({ label: `${row.unit}-${row.lesson}`, first: row.first, latest: row.latest }))}
+                  .map((row) => ({ label: `第${courseLessonNumber(row.unit, row.lesson)}课`, first: row.first, latest: row.latest }))}
               />
             </section>
             {detail?.profileRestricted || student.profileRestricted ? (
@@ -1533,6 +1533,7 @@ function StudentDialog({
                   <option value="all">全部记录</option>
                   <option value="unit2">第二课测试与写作</option>
                   <option value="lesson3">第三课词组与阅读</option>
+                  <option value="lesson6">Unit 2 第6课词汇匹配</option>
                   <option value="word">单词跟读</option>
                   <option value="speaking">情境口语</option>
                   <option value="quiz">铁路小测</option>
@@ -1746,9 +1747,9 @@ function HistoryDetails({ record }: { record: History }) {
     : [];
   return (
     <>
-      {(record.type === 'unit2' || record.type === 'lesson3') && (
+      {(['unit2', 'lesson3', 'lesson6'].includes(record.type || '')) && (
         <details>
-          <summary>{record.type === 'lesson3' ? '查看第三课作答' : '查看第二课答案 / 作文原文'}</summary>
+          <summary>{record.type === 'lesson6' ? '查看Unit 2第6课作答' : record.type === 'lesson3' ? '查看第三课作答' : '查看第二课答案 / 作文原文'}</summary>
           <div className="at-quiz-feedback">
             {record.details?.essay && (
               <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.9 }}>
@@ -1793,7 +1794,7 @@ function HistoryDetails({ record }: { record: History }) {
           </div>
         </details>
       ) : null}
-      {record.type !== 'unit2' && record.type !== 'lesson3' && quizFeedback.length ? (
+      {!['unit2', 'lesson3', 'lesson6'].includes(record.type || '') && quizFeedback.length ? (
         <details>
           <summary>查看小测答题与解析</summary>
           <div className="at-quiz-feedback">
@@ -2044,7 +2045,7 @@ export function TaskComposer({
               <select
                 disabled={courseLocked}
                 value={task.unit}
-                onChange={(event) => update({ unit: event.target.value })}
+                onChange={(event) => update({ unit: event.target.value, ...(event.target.value === 'Unit 2' ? { lesson: 'Lesson 3' } : {}) })}
               >
                 {Array.from({ length: 30 }, (_, i) => i + 1).map((unit) => (
                   <option value={`Unit ${unit}`} key={unit}>
@@ -2060,9 +2061,9 @@ export function TaskComposer({
                 value={task.lesson}
                 onChange={(event) => update({ lesson: event.target.value })}
               >
-                {[1, 2, 3].map((lesson) => (
+                {availableCourseLessons(Number(task.unit.match(/\d+/)?.[0]) || 1).map((lesson) => (
                   <option value={`Lesson ${lesson}`} key={lesson}>
-                    第{lesson}课
+                    第{courseLessonNumber(Number(task.unit.match(/\d+/)?.[0]) || 1, lesson)}课
                   </option>
                 ))}
               </select>

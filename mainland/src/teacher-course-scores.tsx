@@ -1,7 +1,7 @@
 import { ArrowRight, BookOpenCheck, ClipboardList, TrainFront, TrendingUp, UsersRound } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { archiveRequest } from './archive-api';
-import { BUILTIN_COURSE_TASKS, type CourseProgress, type LessonResult } from './course-board';
+import { availableCourseLessons, BUILTIN_COURSE_TASKS, courseLessonNumber, type CourseProgress, type LessonResult } from './course-board';
 import { getTeacherToken } from './api';
 import { normalizeSchoolClass } from '@/lib/school-classes';
 import { ClassScoreBars, CourseTrendChart, ScoreDistribution } from './course-charts';
@@ -44,9 +44,12 @@ export function TeacherCourseScores({
   canManageCourse: boolean;
   onStudent: (id: string) => void;
 }) {
-  const [courseUnits, setCourseUnits] = useState<CourseUnit[]>([{ number: 1, title: '校园与学习', lessons: [1, 2, 3] }]);
+  const [courseUnits, setCourseUnits] = useState<CourseUnit[]>([
+    { number: 1, title: '校园与学习', lessons: [1, 2, 3] },
+    { number: 2, title: '时间与人生', lessons: [3] },
+  ]);
   const [unit, setUnit] = useState(1);
-  const [lesson, setLesson] = useState(1);
+  const [lessonSelection, setLesson] = useState(1);
   const [showAll, setShowAll] = useState(false);
   const [page, setPage] = useState(1);
   const [feedError, setFeedError] = useState('');
@@ -71,14 +74,16 @@ export function TeacherCourseScores({
     const byNumber = new Map<number, CourseUnit>(courseUnits.map((row) => [row.number, row]));
     for (const task of visibleTasks) {
       const number = coordinate(task.unit);
-      if (number && !byNumber.has(number)) byNumber.set(number, { number, lessons: [1, 2, 3] });
+      if (number && !byNumber.has(number)) byNumber.set(number, { number, lessons: availableCourseLessons(number) });
     }
     for (const student of students) for (const row of student.courseProgress?.lessons || []) {
-      if (!byNumber.has(row.unit)) byNumber.set(row.unit, { number: row.unit, lessons: [1, 2, 3] });
+      if (!byNumber.has(row.unit)) byNumber.set(row.unit, { number: row.unit, lessons: availableCourseLessons(row.unit) });
     }
     return [...byNumber.values()].sort((a, b) => a.number - b.number);
   }, [courseUnits, visibleTasks, students]);
-  const lessonTiles = useMemo(() => [1, 2, 3].map((number) => {
+  const lessonNumbers = useMemo(() => availableCourseLessons(unit, units.find((row) => row.number === unit)?.lessons), [unit, units]);
+  const lesson = lessonNumbers.includes(lessonSelection) ? lessonSelection : lessonNumbers[0];
+  const lessonTiles = useMemo(() => lessonNumbers.map((number) => {
     const results = students.map((student) => resultFor(student, unit, number)).filter((row) => row?.latest != null);
     return {
       number,
@@ -87,7 +92,7 @@ export function TeacherCourseScores({
       average: average(results.map((row) => row?.latest)),
       change: average(results.map((row) => row?.change)),
     };
-  }), [students, unit, visibleTasks]);
+  }), [students, unit, visibleTasks, lessonNumbers]);
   const overall = useMemo(() => {
     const personalMeans = students.map((student) => average((student.courseProgress?.lessons || []).map((row) => row.latest)));
     const completedLessons = new Set(students.flatMap((student) => (student.courseProgress?.lessons || [])
@@ -96,14 +101,14 @@ export function TeacherCourseScores({
       participating: personalMeans.filter((value) => value != null).length,
       average: average(personalMeans),
       completedLessons: completedLessons.size,
-      plannedLessons: units.length * 3,
+      plannedLessons: units.reduce((count, row) => count + availableCourseLessons(row.number, row.lessons).length, 0),
     };
   }, [students, units]);
   const selectedTasks = visibleTasks.filter((task) => coordinate(task.unit) === unit && coordinate(task.lesson) === lesson);
   const scoreRows = students.map((student) => ({ student, result: resultFor(student, unit, lesson) }));
   const activeRows = scoreRows.filter((row) => row.result?.latest != null);
-  const lessonTrend = [1, 2, 3].map((number) => ({
-    label: `第${number}课`,
+  const lessonTrend = lessonNumbers.map((number) => ({
+    label: `第${courseLessonNumber(unit, number)}课`,
     first: average(students.map((student) => resultFor(student, unit, number)?.first)),
     latest: average(students.map((student) => resultFor(student, unit, number)?.latest)),
     participants: students.filter((student) => resultFor(student, unit, number)?.latest != null).length,
@@ -122,9 +127,9 @@ export function TeacherCourseScores({
     })).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
   }, [students, unit, lesson]);
   const chartStudent = students.find((student) => student.id === chartStudentId);
-  const studentTrend = chartStudent ? [1, 2, 3].map((number) => {
+  const studentTrend = chartStudent ? lessonNumbers.map((number) => {
     const result = resultFor(chartStudent, unit, number);
-    return { label: `第${number}课`, first: result?.first, latest: result?.latest };
+    return { label: `第${courseLessonNumber(unit, number)}课`, first: result?.first, latest: result?.latest };
   }) : [];
   useEffect(() => {
     if (chartStudentId && chartStudent) document.getElementById('tc-student-trend')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -166,22 +171,22 @@ export function TeacherCourseScores({
       {feedError && <p className="tc-feed-error" role="status">{feedError}</p>}
 
       <section className="tc-panel tc-main-trend">
-        <div className="tc-chart-heading"><div><span>进步曲线</span><h3>Unit {unit} · 三课成绩变化</h3><p>每课有成绩学生的首次与最近均分。</p></div><strong>{lessonTrend.filter((point) => point.latest != null).length}/3 课有成绩</strong></div>
+        <div className="tc-chart-heading"><div><span>进步曲线</span><h3>Unit {unit} · 课次成绩变化</h3><p>每课有成绩学生的首次与最近均分。</p></div><strong>{lessonTrend.filter((point) => point.latest != null).length}/{lessonNumbers.length} 课有成绩</strong></div>
         <CourseTrendChart points={lessonTrend} label={`Unit ${unit}班级成绩变化`} />
       </section>
 
       <div className="tc-unit-heading">
         <div><span>课次导航</span><h2>选择单元与课次</h2></div>
         <label>单元
-          <select value={unit} onChange={(event) => { setUnit(Number(event.target.value)); setLesson(1); }}>
+          <select value={unit} onChange={(event) => { const nextUnit = Number(event.target.value); setUnit(nextUnit); setLesson(availableCourseLessons(nextUnit, units.find((row) => row.number === nextUnit)?.lessons)[0]); }}>
             {units.map((row) => <option key={row.number} value={row.number}>Unit {row.number}{row.title ? ` · ${row.title}` : ''}</option>)}
           </select>
         </label>
       </div>
       <div className="tc-lesson-grid">
         {lessonTiles.map((tile) => <button key={tile.number} type="button" className={`tc-lesson-card ${lesson === tile.number ? 'selected' : ''}`} onClick={() => setLesson(tile.number)} aria-pressed={lesson === tile.number}>
-          <span className="tc-lesson-index">UNIT {unit} / LESSON {tile.number}</span>
-          <span className="tc-lesson-title">第 {tile.number} 课 <ArrowRight /></span>
+          <span className="tc-lesson-index">UNIT {unit} / LESSON {courseLessonNumber(unit, tile.number)}</span>
+          <span className="tc-lesson-title">第 {courseLessonNumber(unit, tile.number)} 课 <ArrowRight /></span>
           <span className="tc-lesson-detail">{tile.taskCount} 项任务 · {tile.participating} 人有成绩</span>
           <strong>{score(tile.average)}</strong>
           <span className="tc-lesson-change">同任务复练 {change(tile.change)}</span>
@@ -189,17 +194,17 @@ export function TeacherCourseScores({
       </div>
 
       <div className="tc-chart-grid">
-        <section className="tc-panel"><div className="tc-chart-heading"><div><span>分数分布</span><h3>第 {lesson} 课 · 成绩分布</h3><p>只统计已提交的学生。</p></div></div><ScoreDistribution scores={scoreRows.map((row) => row.result?.latest)} /></section>
+        <section className="tc-panel"><div className="tc-chart-heading"><div><span>分数分布</span><h3>第 {courseLessonNumber(unit, lesson)} 课 · 成绩分布</h3><p>只统计已提交的学生。</p></div></div><ScoreDistribution scores={scoreRows.map((row) => row.result?.latest)} /></section>
         <section className="tc-panel"><div className="tc-chart-heading"><div><span>班级对比</span><h3>各班最近均分</h3><p>按班级名称排列，可查看参与人数。</p></div></div><ClassScoreBars rows={classRows} /></section>
       </div>
 
       {chartStudent && <section id="tc-student-trend" className="tc-panel tc-student-trend">
-        <div className="tc-chart-heading"><div><span>个人成长轨迹</span><h3>{chartStudent.name} · 三课变化</h3><p>{chartStudent.className} · 只连接有成绩的课次</p></div><button type="button" onClick={() => setChartStudentId('')}>收起图表</button></div>
+        <div className="tc-chart-heading"><div><span>个人成长轨迹</span><h3>{chartStudent.name} · 课次变化</h3><p>{chartStudent.className} · 只连接有成绩的课次</p></div><button type="button" onClick={() => setChartStudentId('')}>收起图表</button></div>
         <CourseTrendChart points={studentTrend} label={`${chartStudent.name}在Unit ${unit}的成绩变化`} />
         <button className="tc-full-profile" type="button" onClick={() => onStudent(chartStudent.id)}>查看自评雷达、录音和完整档案 <ArrowRight /></button>
       </section>}
 
-      <div className="tc-detail-heading"><div><span>本课明细</span><h2>Unit {unit} · 第 {lesson} 课</h2></div><p>{activeRows.length} 人有成绩 · 最近均分 {score(average(activeRows.map((row) => row.result?.latest)))}</p></div>
+      <div className="tc-detail-heading"><div><span>本课明细</span><h2>Unit {unit} · 第 {courseLessonNumber(unit, lesson)} 课</h2></div><p>{activeRows.length} 人有成绩 · 最近均分 {score(average(activeRows.map((row) => row.result?.latest)))}</p></div>
       <div className="tc-split">
         <section className="tc-panel">
           <h3><ClipboardList /> 本课任务 <span>{selectedTasks.length} 项</span></h3>

@@ -1131,3 +1131,125 @@ test('teacher grade sync checks student numbers on approved pending bindings bef
   assert.equal(view.gradeSync.autoAssociatedCount, 0);
   assert.equal(view.gradeSync.needsReviewCount, 1);
 });
+
+const lesson6Order = [1, 8, 13, 10, 0, 11, 9, 4, 14, 5];
+const lesson6Letters = 'ABCDEFGHIJKLMNOP';
+const lesson6Items = (wrong = false) => lesson6Order.map((index, i) => ({ index, selected: lesson6Letters[wrong ? lesson6Order[(i + 1) % lesson6Order.length] : index] }));
+
+test('Lesson 6 API server-scores immutable attempts and keeps them in Unit 2 without changing earlier lessons', async () => {
+  const f = fixture();
+  const owner = await f.authorize();
+  const payload = { studentToken: owner.studentToken, requestId: 'lesson6-perfect-0001', activity: 'time-matching', items: lesson6Items(), score: 0 };
+  const saved = await f.call('saveLesson6Attempt', payload);
+  assert.equal(saved.ok, true);
+  assert.equal(saved.pendingVerification, false);
+  assert.match(saved.submission.id, /^lesson6-/);
+  assert.equal(saved.submission.score, 100);
+  assert.equal(saved.submission.correct, 10);
+  assert.equal(saved.submission.total, 10);
+  assert.equal(saved.submission.feedback.length, 10);
+  const original = structuredClone(f.db.rows(C.unit2));
+  assert.equal(original.length, 1);
+  assert.equal(original[0].course_unit, 'Unit 2');
+  assert.equal(original[0].course_lesson, 'Lesson 3');
+  assert.equal((await f.call('saveLesson6Attempt', { ...payload, score: 999 })).submission.id, saved.submission.id);
+  assert.equal((await f.call('saveLesson6Attempt', { ...payload, items: lesson6Items(true) })).status, 409);
+  assert.deepEqual(f.db.rows(C.unit2), original);
+  f.advance(1000);
+  const zero = await f.call('saveLesson6Attempt', { ...payload, requestId: 'lesson6-wrong-0002', items: lesson6Items(true), score: 100 });
+  assert.equal(zero.submission.score, 0);
+  const progress = (await f.call('courseStudentScores', { studentToken: owner.studentToken })).courseProgress;
+  assert.equal(progress.lessons.length, 1);
+  const sixth = progress.lessons[0];
+  assert.equal(sixth.unit, 2); assert.equal(sixth.lesson, 3);
+  assert.equal(sixth.first, 100); assert.equal(sixth.latest, 0); assert.equal(sixth.attempts, 2);
+  const oldSummary = await f.call('unit2Dashboard', { studentToken: owner.studentToken });
+  assert.equal(oldSummary.unit2.attemptCount, 0, 'Unit 1 Lesson 2 radar must not count the new activity');
+  const history = (await f.call('teacherStudent', { token: f.tokens.july, studentId: owner.studentId })).history;
+  assert.equal(history.filter(row => row.type === 'lesson6').length, 2);
+  assert.equal(history.some(row => row.type === 'lesson3'), false);
+});
+
+test('Lesson 6 API rejects incomplete or forged answers before writing a grade', async () => {
+  const f = fixture();
+  const owner = await f.authorize();
+  const base = { studentToken: owner.studentToken, activity: 'time-matching', requestId: 'lesson6-invalid-0001', items: lesson6Items() };
+  assert.equal((await f.call('saveLesson6Attempt', { ...base, studentToken: '' })).status, 401);
+  const duplicate = lesson6Items(); duplicate[1].selected = duplicate[0].selected;
+  const missingCore = lesson6Items(); missingCore[0] = { index: 2, selected: 'C' };
+  for (const [i, items] of [lesson6Items().slice(0, 9), duplicate, missingCore].entries()) {
+    assert.equal((await f.call('saveLesson6Attempt', { ...base, requestId: `lesson6-invalid-${i + 1000}`, items, score: 100 })).status, 400);
+  }
+  assert.equal((await f.call('saveLesson6Attempt', { ...base, activity: 'matching1' })).status, 400);
+  assert.equal((await f.call('saveLesson6Attempt', { ...base, requestId: '../escape' })).status, 400);
+  assert.equal(f.db.rows(C.unit2).length, 0);
+  assert.equal(f.db.rows(C.practiceAttempts).length, 0);
+});
+
+test('Lesson 6 request IDs cannot be replayed by another student and do not collide with Lesson 3', async () => {
+  const f = fixture();
+  const owner = await f.authorize();
+  const other = await f.authorize('另一学生');
+  const payload = { studentToken: owner.studentToken, requestId: 'shared-lesson-request-0001', activity: 'time-matching', items: lesson6Items() };
+  const saved = await f.call('saveLesson6Attempt', payload);
+  assert.equal((await f.call('saveLesson6Attempt', { ...payload, studentToken: other.studentToken })).status, 409);
+  assert.equal((await f.call('courseStudentScores', { studentToken: other.studentToken })).courseProgress.lessons.length, 0);
+  const lesson3 = await f.call('saveLesson3Attempt', { ...payload, activity: 'matching1' });
+  assert.equal(lesson3.ok, true);
+  assert.notEqual(lesson3.submission.id, saved.submission.id);
+  assert.match(lesson3.submission.id, /^lesson3-/);
+  const progress = (await f.call('courseStudentScores', { studentToken: owner.studentToken })).courseProgress;
+  assert.deepEqual(progress.lessons.map(row => [row.unit, row.lesson]), [[1, 3], [2, 3]]);
+  assert.equal(f.db.rows(C.unit2).length, 2);
+});
+
+test('Lesson 6 pending grades auto-sync across class/name requests only in teacher views', async () => {
+  const f = fixture();
+  const owner = await f.authorize();
+  await f.call('saveLesson3Attempt', { studentToken: owner.studentToken, requestId: 'lesson6-keep-earlier-0001', activity: 'matching1', items: lesson6Items() });
+  const first = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班', practice: true });
+  const second = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班', practice: true });
+  const payload = { activity: 'time-matching', items: lesson6Items() };
+  const saved = await f.call('saveLesson6Attempt', { ...payload, studentToken: first.practiceToken, requestId: 'lesson6-pending-0001' });
+  assert.equal(saved.pendingVerification, true);
+  assert.equal(saved.submission.score, 100);
+  f.advance(1000);
+  const zero = await f.call('saveLesson6Attempt', { ...payload, items: lesson6Items(true), studentToken: second.practiceToken, requestId: 'lesson6-pending-0002' });
+  assert.equal(zero.pendingVerification, true);
+  assert.equal(zero.submission.score, 0);
+  assert.equal((await f.call('saveLesson6Attempt', { ...payload, studentToken: second.practiceToken, requestId: 'lesson6-pending-0001' })).status, 409);
+  assert.equal(f.db.rows(C.practiceAttempts).length, 2);
+  assert.equal(f.db.rows(C.unit2).length, 1);
+  const teacher = await f.call('teacherCourseScores', { token: f.tokens.july });
+  const student = teacher.students.find(row => row.id === owner.studentId);
+  const sixth = student.courseProgress.lessons.find(row => row.unit === 2 && row.lesson === 3);
+  assert.equal(sixth.first, 100); assert.equal(sixth.latest, 0); assert.equal(sixth.attempts, 2);
+  assert.equal(student.courseProgress.lessons.some(row => row.unit === 2 && row.lesson !== 3), false);
+  assert.equal(student.courseProgress.lessons.find(row => row.unit === 1 && row.lesson === 3).attempts, 1);
+  assert.equal(teacher.gradeSync.autoAssociatedCount, 2);
+  const own = await f.call('courseStudentScores', { studentToken: first.practiceToken });
+  const other = await f.call('courseStudentScores', { studentToken: second.practiceToken });
+  assert.deepEqual(own.courseProgress.lessons.map(row => [row.unit, row.lesson, row.latest]), [[2, 3, 100]]);
+  assert.deepEqual(other.courseProgress.lessons.map(row => [row.unit, row.lesson, row.latest]), [[2, 3, 0]]);
+  const protectedArchive = await f.call('courseStudentScores', { studentToken: owner.studentToken });
+  assert.deepEqual(protectedArchive.courseProgress.lessons.map(row => [row.unit, row.lesson]), [[1, 3]]);
+  assert.equal((await f.call('studentDashboard', { studentToken: first.practiceToken })).status, 401);
+  assert.equal((await f.call('teacherCourseScores', { token: first.practiceToken })).status, 401);
+  assert.equal(f.db.rows(C.sessions).length, 1, 'Grade association cannot authorize a pending device');
+  assert.ok(f.db.rows(C.requests).filter(row => [first.requestId, second.requestId].includes(row.id)).every(row => row.status === 'pending'));
+});
+
+test('Unit 2 is available with only Lesson 6 and rejects selecting skipped lessons', async () => {
+  const f = fixture();
+  const initial = await f.call('publicFeed');
+  assert.deepEqual(initial.units.find(row => row.number === 2).lessons, [3]);
+  for (const lesson of [1, 2]) assert.equal((await f.call('setCurrentLesson', { token: f.tokens.july, unit: 2, lesson })).status, 400);
+  assert.equal((await f.call('setCurrentLesson', { token: f.tokens.july, unit: 2, lesson: 3 })).ok, true);
+  const selected = await f.call('publicFeed');
+  assert.deepEqual(selected.current, { unit: 2, lesson: 3 });
+  assert.deepEqual(selected.units.find(row => row.number === 2).lessons, [3]);
+  const saved = await f.call('saveCourseUnit', { token: f.tokens.july, number: 2, title: '时间与人生', lessons: [3] });
+  assert.deepEqual(saved.unit.lessons, [3]);
+  assert.deepEqual((await f.call('saveCourseUnit', { token: f.tokens.july, number: 2, title: '时间与人生' })).unit.lessons, [3]);
+  assert.equal((await f.call('saveCourseUnit', { token: f.tokens.july, number: 2, lessons: [] })).status, 400);
+});
