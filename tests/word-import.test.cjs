@@ -167,3 +167,16 @@ test('带句末标点的英文例句不按空格拆成多个词条', () => {
     rejected: [{ line: 1, text: sentence }],
   });
 });
+
+test('保留旧格式支持的复数所有格词组', () => {
+  assert.deepEqual(parse("students' union 学生会\nteachers' room 教师办公室").entries, [
+    entry("students' union", '学生会'), entry("teachers' room", '教师办公室'),
+  ]);
+});
+
+test('兼容一行多个竖线词条，同时保留释义内部的中文标点', () => {
+  assert.deepEqual(parse('carrier|载体，承载者, remote|遥远的; leave behind｜留下'), {
+    entries: [entry('carrier', '载体，承载者'), entry('remote', '遥远的'), entry('leave behind', '留下')],
+    rejected: [],
+  });
+});
