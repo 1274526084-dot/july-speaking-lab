@@ -1,0 +1,1 @@
+System.register(["./chunks/school-class-filter-legacy-20261107-word-import.js","./chunks/word-main-legacy-20261107-word-import.js"],function(t,e){return{setters:[function(t){},function(t){}],execute:function(){}}});

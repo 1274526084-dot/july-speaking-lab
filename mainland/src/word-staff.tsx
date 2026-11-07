@@ -41,6 +41,7 @@ import {
   wordRequest,
 } from './word-api';
 import { WordDemoAudio } from './word-demo-audio';
+import { parseWordImport } from './word-import';
 
 type Teacher = {
   id: string;
@@ -79,24 +80,6 @@ function formatDate(value: number) {
 }
 function shareUrl(unit: UnitRow) {
   return `${window.location.origin}${wordPath()}?unit=${unit.share_code}`;
-}
-
-function parseUnitEntries(value: string) {
-  const map = new Map<string, { term: string; meaning: string }>();
-  value
-    .split(/\r?\n/)
-    .flatMap((line) => line.split(/[,，;；\t]+/))
-    .forEach((raw) => {
-      const separator = raw.indexOf('|');
-      const word = (separator >= 0 ? raw.slice(0, separator) : raw)
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, ' ');
-      const meaning = (separator >= 0 ? raw.slice(separator + 1) : '').trim();
-      if (/^[a-z][a-z' -]*$/.test(word) && !map.has(word))
-        map.set(word, { term: word, meaning });
-    });
-  return [...map.values()];
 }
 
 function StaffLogin({ mode }: { mode: 'teacher' | 'admin' }) {
@@ -520,12 +503,13 @@ function UnitEditor({
   const [title, setTitle] = useState(unit?.title || '');
   const [note, setNote] = useState(unit?.note || '');
   const [lines, setLines] = useState(
-    unit?.words.map((item) => item.word).join('\n') || '',
+    unit?.words.map((item) => item.meaning ? `${item.word} | ${item.meaning}` : item.word).join('\n') || '',
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState('');
-  const parsedEntries = parseUnitEntries(lines);
+  const parsedImport = parseWordImport(lines);
+  const parsedEntries = parsedImport.entries;
   const entries = parsedEntries.slice(0, 60);
   const terms = entries.map((entry) => entry.term);
   const overflowCount = Math.max(0, parsedEntries.length - entries.length);
@@ -606,12 +590,11 @@ function UnitEditor({
             onChange={(event) => setLines(event.target.value)}
             className="word-input mt-2 h-auto resize-y py-3 text-base leading-7"
             placeholder={
-              'freshman | 大一新生\nrailway locomotive | 铁道机车\nenergy storage technology\ncontact'
+              'carrier 载体\nleave behind 留下\nrailway locomotive | 铁道机车\nenergy storage technology'
             }
           />
           <span className="mt-2 block text-sm font-normal leading-6 text-slate-500">
-            每行一个单词或词组，也可用逗号、分号分隔；词组中的空格会保留，不再拆成多个单词。每个单元最多60项。需要中文释义时可写“单词或词组
-            | 中文”。
+            每行一个单词或词组，可直接粘贴“leave behind 留下”，也支持“leave behind | 留下”和表格的英文、中文两列。纯英文列表可用逗号或分号分隔；词组中的空格会保留。每个单元最多60项。
           </span>
         </label>
         <div className="flex flex-wrap gap-2">
@@ -632,6 +615,17 @@ function UnitEditor({
             : ''}
           {overflowCount ? ` · 已超过上限，后 ${overflowCount} 项暂不处理` : ''}
         </div>
+        {parsedImport.rejected.length > 0 && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" aria-live="polite">
+            <p className="font-bold">有 {parsedImport.rejected.length} 处内容未识别，请检查：</p>
+            <ul className="mt-2 list-inside list-disc space-y-1 break-words">
+              {parsedImport.rejected.slice(0, 3).map((item, index) => (
+                <li key={`${item.line}-${index}`}>第{item.line}行：{item.text.slice(0, 100)}</li>
+              ))}
+            </ul>
+            <p className="mt-2">请保留英文单词或词组及中文释义，删除音标和说明行。只会导入上方预览中列出的内容。</p>
+          </div>
+        )}
         {progress && (
           <p className="rounded-2xl bg-cyan-50 px-4 py-3 text-sm font-bold text-cyan-950">
             {progress}
