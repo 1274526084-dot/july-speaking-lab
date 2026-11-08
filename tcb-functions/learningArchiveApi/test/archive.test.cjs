@@ -1136,6 +1136,22 @@ const lesson6Order = [1, 8, 13, 10, 0, 11, 9, 4, 14, 5];
 const lesson6Letters = 'ABCDEFGHIJKLMNOP';
 const lesson6Items = (wrong = false) => lesson6Order.map((index, i) => ({ index, selected: lesson6Letters[wrong ? lesson6Order[(i + 1) % lesson6Order.length] : index] }));
 
+test('Lesson6 reading saves separately from matching and automatically joins the sixth-lesson grade view',async()=>{
+  const f=fixture();
+  const pending=await f.call('requestAccess',{name:'张同学',className:'26-城轨信号54班',practice:true});
+  const body={studentToken:pending.practiceToken,requestId:'lesson6-reading-0001',activity:'time-reading',choices:[1,3,0,2,1],blanks:['24 hours','fruitless yesterday','deepest respect'],score:0};
+  const saved=await f.call('saveLesson6Attempt',body);assert.equal(saved.ok,true);assert.equal(saved.submission.score,100);assert.equal(saved.submission.total,13);assert.equal(saved.submission.feedback.length,8);
+  const before=structuredClone(f.db.rows(C.practiceAttempts));assert.equal((await f.call('saveLesson6Attempt',body)).submission.id,saved.submission.id);assert.deepEqual(f.db.rows(C.practiceAttempts),before);
+  assert.equal((await f.call('saveLesson6Attempt',{...body,choices:[0,0,0,0,0]})).status,409);
+  const other=await f.call('requestAccess',{name:'另一学生',className:'26-城轨信号54班',practice:true});assert.equal((await f.call('saveLesson6Attempt',{...body,studentToken:other.practiceToken})).status,409);
+  const match=await f.call('saveLesson6Attempt',{studentToken:pending.practiceToken,requestId:'lesson6-matching-0001',activity:'time-matching',items:lesson6Items()});assert.equal(match.ok,true);
+  const progress=await f.call('courseStudentScores',{studentToken:pending.practiceToken});assert.deepEqual(progress.courseProgress.lessons.map(row=>[row.unit,row.lesson,row.items.length,row.latest]),[[2,3,2,100]]);
+  const teacher=await f.call('teacherDashboard',{token:f.tokens.july});const student=teacher.students.find(row=>row.name==='张同学');assert.ok(student);
+  const detail=await f.call('teacherStudent',{token:f.tokens.july,studentId:student.id});assert.equal(detail.history.filter(row=>row.type==='lesson6').length,2);assert.equal(detail.courseProgress.lessons[0].items.length,2);
+  assert.equal((await f.call('studentDashboard',{studentToken:pending.practiceToken})).status,401);
+  assert.equal((await f.call('saveLesson6Attempt',{...body,requestId:'lesson6-reading-bad',blanks:['four word answer here','x','y']})).status,400);assert.equal(f.db.rows(C.practiceAttempts).length,2);
+});
+
 test('Lesson 6 API server-scores immutable attempts and keeps them in Unit 2 without changing earlier lessons', async () => {
   const f = fixture();
   const owner = await f.authorize();

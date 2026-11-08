@@ -105,6 +105,15 @@ export const BUILTIN_COURSE_TASKS: ArchiveTask[] = [
     href: '/july-Englishclass/lesson-6-vocabulary-matching.html',
     description: '16个英文选项，5道双空题；提交后成绩自动同步',
   },
+  {
+    id: 'builtin-lesson6-reading',
+    title: '阅读理解 · 5道选择 + 3道填空',
+    unit: 'Unit 2',
+    lesson: 'Lesson 3',
+    type: 'link',
+    href: '/july-Englishclass/lesson-6-reading-task1-task3.html',
+    description: '阅读时间与人生主题课文，完成B级题型练习；提交后查看定位与解析，成绩自动同步',
+  },
 ];
 export const courseLessonNumber = (unit: number, lesson: number) =>
   (unit - 1) * 3 + lesson;

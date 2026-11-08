@@ -1,4 +1,5 @@
 /* Unit 2 / internal Lesson 3 is the sixth taught lesson. Server-owned bank. */
+const { gradeLesson6Reading } = require('./lesson6-reading');
 const MATCHING = [
   ['interaction', '互动；相互作用'],
   ['put off', '推迟'],
@@ -20,6 +21,7 @@ const MATCHING = [
 const CORE = [1, 5, 9, 11, 13];
 const LETTERS = 'ABCDEFGHIJKLMNOP';
 function gradeLesson6(body) {
+  if (body.activity === 'time-reading') return gradeLesson6Reading(body);
   const items = body.items;
   if (body.activity !== 'time-matching') throw new Error('不支持的第六课任务。');
   if (!Array.isArray(items) || items.length !== 10 ||
