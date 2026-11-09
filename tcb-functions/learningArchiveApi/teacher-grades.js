@@ -24,15 +24,31 @@ function projectTeacherGrades({ data, requests, catalog, projectId, normalizeNam
     const bucket = stored.get(item.key) || [];
     bucket.push(student); stored.set(item.key, bucket);
   }
-  const candidates = [], review = [], numberEvidence = new Map();
+  const candidates = [], legacyGrades = [], review = [], numberEvidence = new Map(), ownerNumbers = new Map();
+  function rememberNumber(item, row, ownerId) {
+    const number = normalizeName(row.student_id);
+    if (!item || !number) return;
+    const numbers = numberEvidence.get(item.key) || new Set();
+    numbers.add(number);
+    numberEvidence.set(item.key, numbers);
+    if (ownerId && stored.get(item.key)?.some(student => student.id === ownerId)) {
+      const verified = ownerNumbers.get(ownerId) || new Set();
+      verified.add(number);
+      ownerNumbers.set(ownerId, verified);
+    }
+  }
   const pendingIdentity = (request, row) => {
     if (!request || request.status !== 'pending') return null;
     const claimed = identity(requestView(request));
     if (!claimed) return null;
     if (row) {
       const submitted = identity(row);
-      if (!submitted || submitted.key !== claimed.key) return null;
-      return submitted;
+      if (submitted) return submitted.key === claimed.key ? submitted : null;
+      // A stored request with a complete class can corroborate its own legacy
+      // submission if the school directory resolves the abbreviated class uniquely.
+      const group = directory.resolve(row);
+      if (group.ambiguous || group.identityKey !== claimed.group.identityKey ||
+          normalizeName(row.student_name) !== normalizeName(claimed.name)) return null;
     }
     return claimed;
   };
@@ -44,11 +60,8 @@ function projectTeacherGrades({ data, requests, catalog, projectId, normalizeNam
           const request = requestMap.get(row.archive_request_id);
           if (request?.status === 'approved') {
             const submitted = identity(row), claimed = identity(requestView(request));
-            if (kind === 'speaking' && submitted && claimed?.key === submitted.key &&
-              stored.get(submitted.key)?.some(student => student.id === request.student_id) && row.student_id) {
-              const numbers = numberEvidence.get(submitted.key) || new Set();
-              numbers.add(normalizeName(row.student_id)); numberEvidence.set(submitted.key, numbers);
-            }
+            if (kind === 'speaking' && submitted && claimed?.key === submitted.key)
+              rememberNumber(submitted, row, request.student_id);
             continue;
           }
           // Missing, rejected, and mismatched claims are never inferred.
@@ -57,19 +70,16 @@ function projectTeacherGrades({ data, requests, catalog, projectId, normalizeNam
         } else if (row.archive_binding === 'unverified') item = identity(row);
         else if (row.archive_binding === 'verified') {
           item = identity(row);
-          if (item && kind === 'speaking' && row.student_id) {
-            const numbers = numberEvidence.get(item.key) || new Set();
-            numbers.add(normalizeName(row.student_id)); numberEvidence.set(item.key, numbers);
-          }
+          if (kind === 'speaking') rememberNumber(item, row, row.archive_student_id);
           continue;
         } else continue;
         if (item) candidates.push({ kind, row, item });
         else review.push({ className: row.class_name, count: 1 });
-      } else if (!row.archive_binding_version) item = identity(row);
-      if (item && kind === 'speaking' && row.student_id) {
-        const numbers = numberEvidence.get(item.key) || new Set();
-        numbers.add(normalizeName(row.student_id)); numberEvidence.set(item.key, numbers);
+      } else if (!row.archive_binding_version) {
+        item = identity(row);
+        if (item) legacyGrades.push(item);
       }
+      if (kind === 'speaking') rememberNumber(item, row);
     }
   }
   for (const row of data.practiceAttempts) {
@@ -81,14 +91,39 @@ function projectTeacherGrades({ data, requests, catalog, projectId, normalizeNam
   }
   const records = { words: [], speaking: [], submissions: [], unit2: [] };
   const students = new Map(), conflicts = new Set(), counts = new Map(), associated = [];
+  const aliases = new Map(), mergedOwners = new Map(), unresolvedOwners = new Set();
+  const unresolvedKeys = new Set();
+  for (const [key, owners] of stored) {
+    if (owners.length < 2) continue;
+    const numbers = numberEvidence.get(key);
+    const number = numbers?.values().next().value;
+    if (data.hasMore || numbers?.size !== 1 || !owners.every(student => ownerNumbers.get(student.id)?.has(number))) {
+      unresolvedKeys.add(key);
+      for (const student of owners) {
+        conflicts.add(student.id);
+        unresolvedOwners.add(student.id);
+      }
+      continue;
+    }
+    const [classKey, nameKey] = key.split('\0');
+    const preferredId = candidateId(classKey, nameKey);
+    const primary = owners.find(student => student.id === preferredId) || [...owners].sort((a, b) => a.id.localeCompare(b.id))[0];
+    const ids = owners.map(student => student.id);
+    mergedOwners.set(primary.id, ids);
+    for (const id of ids) if (id !== primary.id) aliases.set(id, primary.id);
+  }
+  for (const item of legacyGrades) {
+    if (unresolvedKeys.has(item.key)) review.push({ className: item.group.label, count: 1 });
+  }
   for (const { kind, row, item } of candidates) {
     const owners = stored.get(item.key) || [];
-    const id = owners[0]?.id || candidateId(item.group.identityKey, item.name);
+    const ownerId = owners[0]?.id;
+    const id = aliases.get(ownerId) || ownerId || candidateId(item.group.identityKey, item.name);
     if (!owners.length && !students.has(id)) students.set(id, {
       id, name: item.name, class_name: item.group.label, raw_class_name: item.group.label,
       class_identity_name: item.group.label, class_key: item.group.identityKey, project_id: projectId,
     });
-    if (owners.length > 1 || (numberEvidence.get(item.key)?.size || 0) > 1) {
+    if (conflicts.has(id) || (numberEvidence.get(item.key)?.size || 0) > 1) {
       conflicts.add(id); review.push({ className: item.group.label, count: 1 }); continue;
     }
     const view = { ...row, identity_approval: 'self-declared',
@@ -97,7 +132,7 @@ function projectTeacherGrades({ data, requests, catalog, projectId, normalizeNam
     counts.set(id, (counts.get(id) || 0) + 1);
     associated.push({ className: item.group.label, count: 1 });
   }
-  return { records, students: [...students.values()], conflicts, counts, associated, review };
+  return { records, students: [...students.values()], conflicts, counts, associated, review, aliases, mergedOwners, unresolvedOwners };
 }
 
 module.exports = { projectTeacherGrades };

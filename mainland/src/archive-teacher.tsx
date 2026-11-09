@@ -118,6 +118,7 @@ type Student = {
   lastActive?: number | null;
 };
 type AccessRequest = {
+  historyRequested?: boolean;
   id?: string;
   requestId?: string;
   studentId?: string;
@@ -611,7 +612,7 @@ export function ArchiveTeacher() {
     [directory, students],
   );
   const pending = data.requests.filter(
-    (request) => !request.status || request.status === 'pending',
+    (request) => request.historyRequested !== false && (!request.status || request.status === 'pending'),
   );
   const closeStudent = useCallback(() => setSelected(null), []);
   const closeTask = useCallback(() => setTaskEditor(null), []);
@@ -670,7 +671,7 @@ export function ArchiveTeacher() {
               { id: 'scores', label: '每课成绩', icon: GraduationCap },
               { id: 'tasks', label: '任务与组题', icon: ClipboardList },
               { id: 'news', label: '铁路英语窗', icon: Newspaper },
-              { id: 'devices', label: '设备确认', icon: ShieldCheck },
+              { id: 'devices', label: '历史档案授权', icon: ShieldCheck },
             ] as const
           ).map((item) => (
             <button
@@ -718,7 +719,7 @@ export function ArchiveTeacher() {
         {data.gradeSync && data.gradeSync.needsReviewCount > 0 && (
           <Notice danger>
             <ShieldCheck />
-            有{data.gradeSync.needsReviewCount}条成绩因同班同名学号冲突或班级不明确暂未自动归并，请核对；原始记录仍保留。
+            有{data.gradeSync.needsReviewCount}条成绩的姓名、班级或学号需要核对，原始记录已保留。
           </Notice>
         )}
         {data.hasMore && (
@@ -792,7 +793,7 @@ export function ArchiveTeacher() {
                   <div>
                     <p className="at-eyebrow">01 / CLASS ARCHIVE</p>
                     <h2>班级里的每一个人</h2>
-                    <p>成绩按班级和姓名自动汇总，无需逐次录入；原始填写和原模块记录继续保留。</p>
+                    <p>按班级和姓名自动合并已有和新提交的成绩。重复练习可在学生明细中逐次查看。</p>
                   </div>
                   <span className="at-pill">{students.length} 份档案</span>
                 </section>
@@ -943,7 +944,7 @@ export function ArchiveTeacher() {
                                     <strong>{student.name}</strong>
                                     {student.identityConflict && (
                                       <span className="at-status at-danger-text">
-                                        同班同名身份冲突 · 待核对学号
+                                        同班同名 · 待核对学号
                                       </span>
                                     )}
                                     {Boolean(student.autoAssociatedCount) && (
@@ -1154,8 +1155,8 @@ export function ArchiveTeacher() {
                 <section className="at-section-heading">
                   <div>
                     <p className="at-eyebrow">04 / TRUSTED ACCESS</p>
-                    <h2>学生进入申请</h2>
-                    <p>成绩已按班级和姓名自动汇总，无需逐次录入。此处仅核对本人及设备，授权学生查看自己的历史档案。</p>
+                    <h2>个人历史档案授权</h2>
+                    <p>学生主动申请查看自己的历史档案时，在这里核对本人和设备。</p>
                   </div>
                   <span className="at-pill">{pending.length} 项待确认</span>
                 </section>
@@ -1340,7 +1341,7 @@ function StudentDialog({
         {detail?.gradeSync && detail.gradeSync.needsReviewCount > 0 && (
           <Notice danger>
             <ShieldCheck />
-            有{detail.gradeSync.needsReviewCount}条成绩因同班同名学号冲突或班级不明确暂未自动归并，请核对；原始记录仍保留。
+            本班有{detail.gradeSync.needsReviewCount}条成绩的姓名、班级或学号需要核对，原始记录已保留。
           </Notice>
         )}
         {Boolean(detail?.gradeSync?.autoAssociatedCount || student.autoAssociatedCount) && (
@@ -1351,7 +1352,7 @@ function StudentDialog({
         {(detail?.identityConflict || student.identityConflict) && (
           <Notice danger>
             <ShieldCheck />
-            身份待核验：同班同名记录涉及不同学号。相关自填成绩暂未自动归并，以下历史仅供教师核对；请先核对原始记录，再处理设备授权。
+            这名学生有同班同名记录，学号有冲突或缺少一致的学号。请核对原始记录。
           </Notice>
         )}
         {detail?.hasMore && (

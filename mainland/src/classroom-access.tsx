@@ -44,7 +44,7 @@ export function ClassroomAccess({
       const result = await archiveRequest<{
         requests: Request[];
         hasMore?: boolean;
-      }>('listAccessRequests', { pendingOnly: true }, getTeacherToken());
+      }>('listAccessRequests', { pendingOnly: true, historyOnly: true }, getTeacherToken());
       if (!active.current) return;
       setRequests(result.requests.filter((row) => row.status === 'pending'));
       setIncomplete(Boolean(result.hasMore));
@@ -190,7 +190,7 @@ export function ClassroomAccess({
           <UserCheck size={21} />
           <strong>历史档案设备申请</strong>
           <span className={requests.length ? 'has-pending' : ''}>
-            {loaded ? `${requests.length}人待确认` : '正在连接'}
+            {loaded ? (requests.length ? `${requests.length}份历史档案申请` : '暂无授权申请') : '正在连接'}
           </span>
         </div>
         <div>
@@ -206,7 +206,7 @@ export function ClassroomAccess({
         </div>
       </header>
       <p className="classroom-access-hint">
-        练习成绩按班级和姓名自动汇总，无需逐次录入。此处仅核对设备查看本人历史档案的权限，每5秒更新。
+        只有学生主动申请查看个人历史档案时，才会出现在这里。课堂练习成绩提交后自动汇总。
       </p>
       {notice && <output className="classroom-access-success">{notice}</output>}
       {error && (

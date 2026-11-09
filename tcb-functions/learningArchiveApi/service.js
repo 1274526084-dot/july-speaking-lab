@@ -122,8 +122,9 @@ function publicStudent(student) {
   const view = projectSchoolRecord({ ...student, student_name: student.name });
   return { id: student.id, name: view.student_name, className: view.class_name, college: view.normalized_college, rawName: view.raw_student_name, rawClassName: student.migration_raw_class_name || view.raw_class_name };
 }
+const historyRequested = row => row.history_requested === true || !row.practice_enabled;
 function publicRequest(row, now) {
-  return { id: row.id, name: row.name, className: row.class_name, status: row.status === 'pending' && row.expires_at <= now ? 'expired' : row.status, createdAt: row.created_at, expiresAt: row.expires_at, approvedAt: row.approved_at || null, approvedBy: row.approved_by || null, studentId: row.student_id || null, practiceCount: row.practice_count || 0, practiceScores: Object.values(row.practice_scores || {}) };
+  return { id: row.id, name: row.name, className: row.class_name, status: row.status === 'pending' && row.expires_at <= now ? 'expired' : row.status, historyRequested: historyRequested(row), createdAt: row.created_at, expiresAt: row.expires_at, approvedAt: row.approved_at || null, approvedBy: row.approved_by || null, studentId: row.student_id || null, practiceCount: row.practice_count || 0, practiceScores: Object.values(row.practice_scores || {}) };
 }
 
 function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = console }) {
@@ -321,6 +322,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     names.forEach((key, index) => { data[key] = LEGACY[key] ? result[index].rows.filter(row => scoped(row, key) && (key !== 'words' || row.status === 'completed')).map(row => rosterView(row, LEGACY[key])) : result[index].rows.filter(tagged).map(row => key === 'students' ? rosterView(row, COLLECTIONS.students, true) : row); });
     if (mappingScan.hasMore) { data.hasMore = true; data.incompleteCollections.push('classNormalization'); }
     const approved = new Map(approvedRequests.rows.filter(row => tagged(row) && row.status === 'approved').map(row => [row.id, row.student_id]));
+    if (approvedRequests.hasMore) { data.hasMore = true; data.incompleteCollections.push('approvedRequests'); }
     const projection = teacherGrades ? projectTeacherGrades({ data, requests: approvedRequests.rows, catalog: CLASS_CATALOG, projectId: PROJECT_ID, normalizeName, candidateId }) : null;
     const owners = new Set(data.students.map(student => student.id));
     // Never merge new unverified submissions by a public name/class label.
@@ -342,10 +344,18 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     }
     if (projection) {
       for (const kind of ['words', 'speaking', 'submissions', 'unit2']) data[kind].push(...projection.records[kind]);
+      if (projection.aliases.size) {
+        for (const [kinds, field] of [[['profiles', 'words', 'speaking'], 'archive_student_id'], [['reflections', 'submissions', 'unit2'], 'student_id']]) {
+          for (const kind of kinds) data[kind] = data[kind].map(row => {
+            const primary = projection.aliases.get(row[field]);
+            return primary ? { ...row, [field]: primary } : row;
+          });
+        }
+        data.students = data.students.filter(row => !projection.aliases.has(row.id));
+      }
       data.students.push(...projection.students);
       data.teacherGradeProjection = projection;
     }
-    if (approvedRequests.hasMore) { data.hasMore = true; data.incompleteCollections.push('approvedRequests'); }
     // Read only the same domestic units accepted by wordLab. No unit or audio is rewritten.
     data.wordUnits = wordUnits.rows.filter(row => !foreign(row) && (tagged(row) || (!row.project_id && row.teacher_id && row.share_code && typeof row.words_json === 'string')));
     if (wordUnits.hasMore) { data.hasMore = true; data.incompleteCollections.push('wordUnits'); }
@@ -413,7 +423,8 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     return data.identities.get(`${student.class_key}\0${normalizeName(view.name)}`) || data.identities.get(`${group.identityKey}\0${normalizeName(view.name)}`);
   }
   function legacyRows(kind, student, data) {
-    return (identityFor(student, data)?.[kind] || []).filter(row => !row.archive_binding_version || row.archive_student_id === student.id);
+    const exactOwnerRequired = data.teacherGradeProjection?.unresolvedOwners.has(student.id);
+    return (identityFor(student, data)?.[kind] || []).filter(row => row.archive_binding_version ? row.archive_student_id === student.id : !exactOwnerRequired);
   }
   function archiveRows(kind, student, data) {
     return data[`${kind}ByStudent`].get(student.id) || [];
@@ -500,10 +511,12 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     output.courseProgress = courseProgressFor(student, data);
     if (isTeacher) {
       output.gradeSync = teacherGradeSync(data, className => className === publicStudent(student).className);
+      output.gradeSync.autoAssociatedCount = data.teacherGradeProjection?.counts.get(student.id) || 0;
       output.identityConflict = identityConflict(student, data);
-      if (output.identityConflict) output.warnings.push('同班同名记录出现不同学号，相关自填成绩暂未自动归并。请核对原始记录；系统不会猜测学生身份。');
-      const devices = await read(COLLECTIONS.sessions, { project_id: PROJECT_ID, student_id: student.id });
-      output.devices = devices.rows.map(row => ({ id: row.id, createdAt: row.created_at, expiresAt: row.expires_at, revokedAt: row.revoked_at || null, approvedBy: row.approved_by, active: !row.revoked_at && row.expires_at > now() }));
+      if (output.identityConflict) output.warnings.push('同班同名记录出现不同学号，或有多份档案缺少一致的学号。相关成绩暂未自动归并，请核对原始记录。');
+      const ownerIds = data.teacherGradeProjection?.mergedOwners.get(student.id) || [student.id];
+      const devices = await Promise.all(ownerIds.map(student_id => read(COLLECTIONS.sessions, { project_id: PROJECT_ID, student_id })));
+      output.devices = devices.flatMap(scan => scan.rows).map(row => ({ id: row.id, createdAt: row.created_at, expiresAt: row.expires_at, revokedAt: row.revoked_at || null, approvedBy: row.approved_by, active: !row.revoked_at && row.expires_at > now() }));
       output.hasMore ||= devices.hasMore;
     }
     return output;
@@ -582,6 +595,19 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       await rate(event, 'start-practice', 30, 15 * 60 * 1000, hash(body.requestToken || ''));
       return startPractice(body.requestToken);
     }
+    if (action === 'requestHistoryAccess') {
+      const token = body.requestToken;
+      if (!validToken(token)) fail(401, '课堂身份已失效，请重新进入。');
+      const tokenHash = hash(token);
+      const id = `access-${tokenHash.slice(0, 48)}`;
+      await rate(event, 'request-history-access', 20, 15 * 60 * 1000, tokenHash);
+      await db.runTransaction(async tx => {
+        const request = await get(COLLECTIONS.requests, id, tx);
+        if (!tagged(request) || !equalHash(request.request_token_hash, tokenHash) || request.status !== 'pending' || request.expires_at <= now()) fail(409, '本次课堂身份已到期或已处理，请重新进入。');
+        if (!historyRequested(request)) await put(COLLECTIONS.requests, id, { ...request, history_requested: true }, tx);
+      });
+      return { historyRequested: true };
+    }
     if (action === 'accessStatus') {
       if (!validToken(body.requestToken)) fail(401, '授权申请已失效，请重新申请。');
       await rate(event, 'access-status', 200, 15 * 60 * 1000, hash(body.requestToken));
@@ -590,7 +616,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       if (!tagged(request) || !equalHash(request.request_token_hash, hash(body.requestToken))) fail(401, '授权申请已失效，请重新申请。');
       if (request.status === 'rejected') return { status: 'rejected' };
       if ((request.status === 'pending' && request.expires_at <= now()) || (request.status === 'approved' && Number(request.approved_at) + DAY <= now())) return { status: 'expired' };
-      if (request.status !== 'approved') return { status: 'pending', expiresAt: request.expires_at };
+      if (request.status !== 'approved') return { status: 'pending', expiresAt: request.expires_at, historyRequested: historyRequested(request) };
       const studentToken = hash(`english-archive-device|${body.requestToken}`);
       try {
         const { student, session } = await studentSession(studentToken);
@@ -825,6 +851,8 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     if (action === 'saveNews') return saveOwned('news', body, staff, assignments);
     if (action === 'listAccessRequests') {
       const requests = await read(COLLECTIONS.requests, { project_id: PROJECT_ID, ...(body.pendingOnly === true ? { status: 'pending' } : {}) });
+      const visibleRequests = requests.rows.filter(row => teacherCanSee(staff, row.class_name, assignments) && (body.historyOnly !== true || historyRequested(row)) && (body.pendingOnly !== true || (row.status === 'pending' && row.expires_at > now())));
+      if (!visibleRequests.length) return { requests: [], hasMore: requests.hasMore };
       const evidence = await Promise.all(['words', 'speaking', 'profiles'].map(kind => read(LEGACY[kind], { project_id: PROJECT_ID, archive_binding: 'pending' }, true)));
       const summaries = new Map();
       evidence.forEach((scan,index) => scan.rows.filter(tagged).forEach(row => {
@@ -833,7 +861,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
         list.push({ title: index === 0 ? row.unit_title : index === 1 ? row.scene_title : '学情调查（自评）', score: index === 0 ? score(row.average_score) : index === 1 ? score(row.total_score) : null, submittedAt: timestamp(row) });
         summaries.set(row.archive_request_id, list);
       }));
-      return { requests: requests.rows.map(row => { const extra = summaries.get(row.id) || []; const view = publicRequest(row, now()); return { ...view, practiceCount: view.practiceCount + extra.length, practiceScores: [...view.practiceScores, ...extra] }; }).filter(row => teacherCanSee(staff, row.className, assignments) && (body.pendingOnly !== true || row.status === 'pending')).sort((a, b) => b.createdAt - a.createdAt), hasMore: requests.hasMore || evidence.some(scan => scan.hasMore) };
+      return { requests: visibleRequests.map(row => { const extra = summaries.get(row.id) || []; const view = publicRequest(row, now()); return { ...view, practiceCount: view.practiceCount + extra.length, practiceScores: [...view.practiceScores, ...extra] }; }).sort((a, b) => b.createdAt - a.createdAt), hasMore: requests.hasMore || evidence.some(scan => scan.hasMore) };
     }
     if (action === 'revokeDevice') {
       const id = requiredText(body.sessionId, '设备编号', 100);
@@ -889,7 +917,8 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
       return result;
     }
     if (action === 'teacherStudent') {
-      const student = students.get(text(body.studentId, 100));
+      const requestedId = text(body.studentId, 100);
+      const student = students.get(data.teacherGradeProjection?.aliases.get(requestedId) || requestedId);
       if (!student) fail(404, '没有找到该学生。');
       if (!teacherCanSee(staff, publicStudent(student).className, assignments)) fail(403, '只能查看自己班级的学生档案。');
       return dashboard(student, data, staff.code === 'july', true);

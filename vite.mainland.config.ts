@@ -7,7 +7,7 @@ import { defineConfig } from 'vite';
 
 const projectDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.join(projectDir, 'mainland');
-const releaseId = '20261108-lesson6-reading';
+const releaseId = '20261109-teacher-merge';
 
 export default defineConfig({
   root: webRoot,

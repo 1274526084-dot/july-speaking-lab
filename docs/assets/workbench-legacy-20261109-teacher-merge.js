@@ -1,0 +1,1 @@
+System.register(["./chunks/school-class-filter-legacy-20261109-teacher-merge.js","./chunks/main-legacy-20261109-teacher-merge.js"],function(e,c){return{setters:[function(e){},function(e){}],execute:function(){}}});

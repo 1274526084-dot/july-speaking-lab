@@ -119,6 +119,7 @@ export function ArchiveStudent() {
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [requestingHistory, setRequestingHistory] = useState(false);
   const [tab, setTab] = useState('path');
   const [avatar, setAvatar] = useState<'explorer' | 'engineer'>(() =>
     localStorage.getItem('july.archive.avatar') === 'engineer'
@@ -229,6 +230,7 @@ export function ArchiveStudent() {
           studentToken?: string;
           student?: { id: string; name: string; className: string };
           expiresAt?: number;
+          historyRequested?: boolean;
         }>('accessStatus', { requestToken: pending.requestToken });
         if (!active) return;
         if (result.status === 'approved' && result.studentToken) {
@@ -248,6 +250,13 @@ export function ArchiveStudent() {
               ),
             });
             window.location.replace(next);
+          }
+        } else if (result.status === 'pending' && result.historyRequested && !pending.historyRequested) {
+          const current = getPendingAccess();
+          if (current?.requestToken === pending.requestToken && !current.historyRequested) {
+            const updated = { ...current, historyRequested: true };
+            setPendingAccess(updated);
+            setPending(updated);
           }
         } else if (
           result.status === 'rejected' ||
@@ -322,6 +331,25 @@ export function ArchiveStudent() {
       active = false;
     };
   }, [pending]);
+
+  async function requestHistory() {
+    if (!pending || requestingHistory) return;
+    setRequestingHistory(true);
+    setError('');
+    try {
+      await archiveRequest('requestHistoryAccess', { requestToken: pending.requestToken });
+      const current = getPendingAccess();
+      if (current?.requestToken === pending.requestToken) {
+        const updated = { ...current, historyRequested: true };
+        setPendingAccess(updated);
+        setPending(updated);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '申请失败，请重试。');
+    } finally {
+      setRequestingHistory(false);
+    }
+  }
 
   async function requestAccess(event: React.SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -510,7 +538,7 @@ export function ArchiveStudent() {
             <StudentGradeNotice />
             {pending ? (
               <>
-                <span className="archive-step">申请已发送</span>
+                <span className="archive-step">正在进入课堂</span>
                 <h2>正在连接课堂任务</h2>
                 <p>
                   姓名：{pending.name}
@@ -550,7 +578,7 @@ export function ArchiveStudent() {
                   </span>
                   <div>
                     <span className="archive-step">MY LEARNING PASS</span>
-                    <h2>进入我的档案</h2>
+                    <h2>进入课堂</h2>
                   </div>
                   <span className="archive-ticket-stamp">无需密码</span>
                 </div>
@@ -594,7 +622,7 @@ export function ArchiveStudent() {
                     busy || !name.trim() || !className.trim() || !consent
                   }
                 >
-                  {busy ? '正在发送…' : '进入课堂 / 我的档案'}
+                  {busy ? '正在连接…' : '开始课堂练习'}
                   <ArrowRight size={18} />
                 </button>
                 <details className="archive-entry-help">
@@ -637,7 +665,7 @@ export function ArchiveStudent() {
             <div>
               <span className="archive-eyebrow">课堂练习 · 先做任务</span>
               <h1>{pending.name}</h1>
-              <p>{pending.className} · 身份待教师课后确认</p>
+              <p>{pending.className} · 可以开始练习</p>
             </div>
             <button
               className="archive-secondary"
@@ -656,11 +684,14 @@ export function ArchiveStudent() {
           </p>
           {pending.requestId && (
             <details className="archive-small">
-              <summary>课后给老师核对本机申请</summary>
-              <p>
-                本机申请标记：{pending.requestId.slice(-8)}
-                。请本人向老师展示此页；老师只需核对标记后点击确认，无需输入验证码。
-              </p>
+              <summary>查看往期个人档案</summary>
+              {pending.historyRequested ? (
+                <p>申请已提交。本机标记为 {pending.requestId.slice(-8)}，请本人向老师展示此页。</p>
+              ) : (
+                <button className="archive-secondary" disabled={requestingHistory} onClick={() => void requestHistory()}>
+                  {requestingHistory ? '正在申请…' : '申请查看历史档案'}
+                </button>
+              )}
             </details>
           )}
           <CourseBoard onOpen={openTask} />

@@ -28,6 +28,7 @@ export function clearArchiveToken() {
   localStorage.removeItem(STUDENT_TOKEN);
 }
 export type AccessRequest = {
+  historyRequested?: boolean;
   requestId?: string;
   requestToken: string;
   verificationCode: string;

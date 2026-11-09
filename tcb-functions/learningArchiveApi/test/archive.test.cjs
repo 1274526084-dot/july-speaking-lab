@@ -920,6 +920,53 @@ function gradeSyncWord(id, requestId, name = '张同学', className = '26-城轨
   return word(id, name, className, { archive_binding_version: 1, archive_binding: 'pending', archive_request_id: requestId, course_unit: 'Unit 2', course_lesson: 'Lesson 1', ...extra });
 }
 
+test('classroom grades sync before students request personal history access', async () => {
+  const f = fixture();
+  const request = await f.call('requestAccess', { name: '张同学', className: '26-城轨信号54班', practice: true });
+  await f.db.collection(LEGACY.words).doc('linked-short-class').set(gradeSyncWord('linked-short-class', request.requestId, '张同学', '2654', { average_score: 80 }));
+  const list = (token = f.tokens.july) => f.call('listAccessRequests', { token, pendingOnly: true, historyOnly: true });
+  assert.deepEqual((await list()).requests, []);
+  const dashboard = await f.call('teacherDashboard', { token: f.tokens.july });
+  assert.equal(dashboard.students[0].wordAverage, 80);
+  assert.equal(dashboard.requests[0].historyRequested, false);
+  assert.equal((await f.call('requestHistoryAccess', { requestToken: 'a'.repeat(64) })).status, 409);
+  for (let i = 0; i < 2; i++) {
+    assert.equal((await f.call('requestHistoryAccess', { requestToken: request.requestToken })).historyRequested, true);
+  }
+  assert.deepEqual((await list()).requests.map(row => row.id), [request.requestId]);
+  assert.deepEqual((await list(f.tokens.lisa)).requests, []);
+  assert.equal((await f.call('accessStatus', { requestToken: request.requestToken })).status, 'pending');
+  assert.equal((await f.call('studentDashboard', { studentToken: request.practiceToken })).status, 401);
+  assert.equal(f.db.rows(C.sessions).length, 0);
+});
+
+test('teacher view combines matching archived IDs once and keeps differing student numbers separate', async () => {
+  const className = '26-城轨信号54班';
+  const owners = ['archived-a', 'archived-b'];
+  for (const number of ['20260101', '20260102', '']) {
+    const f = fixture({
+      [C.students]: owners.map(id => ({ id, project_id: PROJECT_ID, name: '张同学', class_name: className })),
+      [LEGACY.words]: [word('word-before-archive')],
+      [LEGACY.speaking]: owners.map((id, i) => ({ id: `speaking-${i}`, project_id: PROJECT_ID, student_name: '张同学', class_name: className,
+        student_id: i ? number : '20260101', scene_id: 'club', total_score: 60 + i * 20, submitted_at: 100 + i,
+        archive_binding_version: 1, archive_binding: 'verified', archive_student_id: id })),
+      [C.submissions]: owners.map((id, i) => ({ id: `quiz-${i}`, project_id: PROJECT_ID, student_id: id, task_id: 'same-task', unit: 'Unit 1', lesson: 'Lesson 1', score: 90 + i, created_at: 200 + i })),
+    });
+    const matches = number === '20260101';
+    const dashboard = await f.call('teacherDashboard', { token: f.tokens.july });
+    assert.equal(dashboard.students.length, matches ? 1 : 2);
+    assert.equal(dashboard.students.every(row => row.identityConflict === !matches), true);
+    const detail = await f.call('teacherStudent', { token: f.tokens.july, studentId: owners[1] });
+    assert.equal(detail.student.id, matches ? owners[0] : owners[1]);
+    assert.equal(detail.summary.quizCount, matches ? 2 : 1);
+    assert.equal(detail.summary.speakingCount, matches ? 2 : 1);
+    assert.equal(detail.summary.wordCount, matches ? 1 : 0);
+    assert.equal((await f.call('teacherCourseScores', { token: f.tokens.july })).students.length, dashboard.students.length);
+    assert.deepEqual(f.db.rows(C.students).map(row => row.id), owners);
+    assert.deepEqual(f.db.rows(C.submissions).map(row => row.student_id), owners);
+  }
+});
+
 test('teacher grade sync joins expired requests and safe class/name aliases without changing first/latest scoring', async () => {
   const f = fixture({
     [C.requests]: [gradeSyncRequest('sync-old'), gradeSyncRequest('sync-new', ' 张 同学 ', '城轨信号2654')],
