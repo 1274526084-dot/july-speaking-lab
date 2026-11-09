@@ -13,6 +13,7 @@ import {
   setTeacherToken,
   sitePath,
 } from './api';
+import { TEACHER_OPTIONS } from './teacher-persona';
 
 export function TeacherLogin() {
   const [code, setCode] = useState('');
@@ -70,7 +71,7 @@ export function TeacherLogin() {
             教师数据登录
           </h1>
           <p className="mt-3 leading-7 text-[#687168]">
-            四位教师独立登录，共同查看学生的录音、对话文本和评分。
+            教师独立登录，查看所带班级学生的录音、对话文本和评分。
           </p>
         </div>
 
@@ -87,10 +88,7 @@ export function TeacherLogin() {
                 className="focus-ring h-13 w-full appearance-none rounded-2xl border border-[#d9c4b2] bg-[#fffaf6] pl-12 pr-10 text-base"
               >
                 <option value="">请选择姓名</option>
-                <option value="cherie">Cherie</option>
-                <option value="lisa">Lisa</option>
-                <option value="alice">Alice</option>
-                <option value="july">July</option>
+                {TEACHER_OPTIONS.map(({ code, label }) => <option key={code} value={code}>{label}</option>)}
               </select>
             </span>
           </label>

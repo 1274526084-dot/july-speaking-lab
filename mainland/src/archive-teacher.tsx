@@ -58,7 +58,7 @@ import { type ArchiveTask as CourseTask } from './archive-api';
 import { LearningAvatar, SkillRadar } from './archive-visuals';
 import { type EnglishProfile, SKILL_LABELS } from './profile-api';
 import { getWordToken, wordPath, wordRequest } from './word-api';
-import { teacherBanner, teacherPortrait } from './teacher-persona';
+import { teacherBanner, teacherCode, teacherPortrait } from './teacher-persona';
 import './archive-teacher.css';
 
 type Tab = 'students' | 'scores' | 'tasks' | 'news' | 'devices' | 'overview';
@@ -547,7 +547,7 @@ export function ArchiveTeacher() {
     if (tab === 'overview') void loadOverview();
   }, [tab, loadOverview]);
   async function saveAssignments() {
-    if (!assignmentDraft || !window.confirm('确认更新四位老师的班级分工？学生成绩不会改动。')) return;
+    if (!assignmentDraft || !window.confirm('确认更新教师班级分工？学生成绩不会改动。')) return;
     setOverviewLoading(true);
     try {
       await archiveRequest('saveTeacherAssignments', { assignments: assignmentDraft }, getTeacherToken());
@@ -651,7 +651,7 @@ export function ArchiveTeacher() {
         </div>
       </header>
       <div className="at-shell">
-        <section className="at-dashboard-hero" style={{ backgroundImage: `linear-gradient(90deg, rgba(255,253,246,.9), rgba(255,253,246,.55) 49%, rgba(255,253,246,0) 72%), url('${teacherBanner(data.teacher?.code || teacherName)}')` }}>
+        <section className={`at-dashboard-hero${teacherCode(data.teacher?.code || teacherName) === 'zhai' ? ' at-dashboard-hero--zhai' : ''}`} style={{ backgroundImage: `linear-gradient(90deg, rgba(255,253,246,.9), rgba(255,253,246,.55) 49%, rgba(255,253,246,0) 72%), url('${teacherBanner(data.teacher?.code || teacherName)}')` }}>
           <div className="at-dashboard-intro">
             <span><TrainFront /> RAILWAY ENGLISH · 教师档案馆</span>
             <h1>{teacherName} · 英语成长档案</h1>
@@ -667,7 +667,7 @@ export function ArchiveTeacher() {
           {(
             [
               { id: 'students', label: '班级档案', icon: UsersRound },
-              { id: 'overview', label: '四师总览', icon: Layers3 },
+              { id: 'overview', label: '教师总览', icon: Layers3 },
               { id: 'scores', label: '每课成绩', icon: GraduationCap },
               { id: 'tasks', label: '任务与组题', icon: ClipboardList },
               { id: 'news', label: '铁路英语窗', icon: Newspaper },
@@ -738,13 +738,13 @@ export function ArchiveTeacher() {
             {tab === 'overview' && (
               <section className="at-panel">
                 <div className="at-panel-heading">
-                  <div><h2>四位老师 · 班级总览</h2><p>只展示班级汇总；学生个人档案仍由任课教师查看。</p></div>
+                  <div><h2>教师班级总览</h2><p>只展示班级汇总；学生个人档案仍由任课教师查看。</p></div>
                   <button type="button" className="at-secondary" onClick={() => void loadOverview()} disabled={overviewLoading}>刷新总览</button>
                 </div>
                 {overviewLoading && !overview ? <div className="at-loading"><LoaderCircle className="at-spin" />正在统计…</div> : null}
                 {overview?.hasMore && <Notice danger>部分记录未完整读取，暂不应用汇总数字。</Notice>}
                 {overview && <>
-                  <p className="at-help">四位老师合计 {overview.teachers.reduce((sum, row) => sum + row.studentCount, 0)} 份档案；另有 {overview.unassignedClassCount} 个班级尚未分给这四位老师。</p>
+                  <p className="at-help">{overview.teachers.length} 位老师合计 {overview.teachers.reduce((sum, row) => sum + row.studentCount, 0)} 份档案。{overview.unassignedClassCount ? `还有 ${overview.unassignedClassCount} 个班级待分配。` : '正式班级已分配完毕。'}</p>
                   <div className="at-owner-grid">
                     {overview.teachers.map((owner) => <article className="at-owner-card" key={owner.code}>
                       <div className="at-owner-head"><img src={teacherPortrait(owner.code)} alt={`${owner.name}老师的形象`} /><div><h3>{owner.name}</h3><p>{owner.classes.length} 个班 · {owner.studentCount} 份档案</p></div></div>

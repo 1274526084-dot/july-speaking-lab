@@ -1091,7 +1091,7 @@ function TeacherApp() {
     <main className="word-shell min-h-screen pb-12">
       <StaffHeader
         title={`${name}的教师工作台`}
-        subtitle="自己的单元独立发布；已发布任务可供四位教师互相应用"
+        subtitle="自己的单元独立发布；已发布任务可供教师互相应用"
         onLogout={() => void logout()}
       />
       <section className="mx-auto max-w-7xl px-5 pt-6">

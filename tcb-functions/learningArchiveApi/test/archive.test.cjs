@@ -271,6 +271,25 @@ test('teacher assignments scope student records and tasks while July manages agg
   assert.equal((await f.call('saveTask', { token: f.tokens.cherie, task: quiz({ classes: ['26-人工智能16班'] }) })).ok, true);
 });
 
+test('Zhai inherits only previously unassigned formal classes from existing teaching assignments', async () => {
+  const { DEFAULT_ASSIGNMENTS } = require('../class-ownership');
+  const { zhai: remaining, ...existing } = DEFAULT_ASSIGNMENTS;
+  const f = fixture({
+    [C.classNormalization]: [{ id: 'teacher-assignments-2026', project_id: PROJECT_ID, kind: 'teacher-assignments', assignments: existing }],
+    [LEGACY.words]: [word('zhai-word', '新同学', '26-无人机1班'), word('other-teacher-word')],
+  });
+  assert.deepEqual(remaining, ['26-无人机1班', '26-无人机2班', '26-酒店6班', '26-机电37班', '26-机电38班']);
+  const overview = await f.call('teacherOverview', { token: f.tokens.july });
+  assert.deepEqual(overview.assignments, { ...existing, zhai: remaining });
+  assert.equal(overview.unassignedClassCount, 0);
+  const staff = await f.call('teacherSession', { token: f.tokens.zhai });
+  assert.deepEqual(staff.assignedClasses, remaining);
+  assert.equal(staff.canManageCourse, false);
+  const dashboard = await f.call('teacherDashboard', { token: f.tokens.zhai });
+  assert.deepEqual(dashboard.students.map(row => row.className), ['26-无人机1班']);
+  assert.equal((await f.call('saveTeacherAssignments', { token: f.tokens.zhai, assignments: overview.assignments })).status, 403);
+});
+
 test('Unit 2 submissions are server scored, idempotent and bound to the authorized student', async () => {
   const f = fixture({ [LEGACY.profiles]: [profile('keep-profile')], [LEGACY.words]: [word('keep-word')] });
   const auth = await f.authorize();
@@ -447,7 +466,7 @@ function memoryDb(seed = {}, options = {}) {
 }
 function fixture(seed = {}, options = {}) {
   let time = 1800000000000;
-  const tokens = { july: 'a'.repeat(64), cherie: 'b'.repeat(64), lisa: 'c'.repeat(64), alice: 'd'.repeat(64), invalid: 'f'.repeat(64) };
+  const tokens = { july: 'a'.repeat(64), cherie: 'b'.repeat(64), lisa: 'c'.repeat(64), alice: 'd'.repeat(64), zhai: 'e'.repeat(64), invalid: 'f'.repeat(64) };
   const teacherRows = Object.entries(tokens).map(([code, token]) => ({ id: hash(token), auth_version: 2, teacher_code: code, teacher_name: code, expires_at: time + 30 * 86400000 }));
   const db = memoryDb({ speaking_sessions: teacherRows, ...Object.fromEntries(Object.values(LEGACY).map(name => [name, []])), ...seed }, options.dbOptions);
   const signed = [];

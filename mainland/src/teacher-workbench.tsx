@@ -38,7 +38,7 @@ import {
   wordPath,
   wordRequest,
 } from './word-api';
-import { teacherPortrait } from './teacher-persona';
+import { TEACHER_OPTIONS, teacherPortrait } from './teacher-persona';
 
 const HUB_TEACHER_KEY = 'july-english-hub.teacher-name';
 
@@ -146,10 +146,7 @@ export function TeacherWorkbenchLogin() {
                 onChange={(event) => setCode(event.target.value)}
                 className="focus-ring h-13 w-full appearance-none rounded-2xl border border-[#d9c4b2] bg-[#fffaf6] pl-12 pr-4"
               >
-                <option value="cherie">Cherie</option>
-                <option value="lisa">Lisa</option>
-                <option value="alice">Alice</option>
-                <option value="july">July</option>
+                {TEACHER_OPTIONS.map(({ code, label }) => <option key={code} value={code}>{label}</option>)}
               </select>
             </span>
           </label>
@@ -251,7 +248,7 @@ export function TeacherWorkbench() {
           {[
             { title: '班级档案', href: sitePath('archive/teacher') },
             { title: '每课任务与成绩', href: sitePath('archive/teacher') + '?tab=scores' },
-            { title: '四师总览', href: sitePath('archive/teacher') + '?tab=overview' },
+            { title: '教师总览', href: sitePath('archive/teacher') + '?tab=overview' },
             { title: '单词与录音', href: wordPath('teacher') },
             { title: '口语与录音', href: sitePath('teacher') },
             { title: '学生学习入口', href: sitePath() },

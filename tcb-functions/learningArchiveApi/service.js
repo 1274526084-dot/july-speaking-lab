@@ -2,7 +2,7 @@
 const { createHash, randomBytes, randomUUID, randomInt, timingSafeEqual } = require('node:crypto');
 const { createSchoolClassDirectory: createClassDirectory, projectSchoolRecord, normalizeSchoolClass, CLASS_NORMALIZATION_VERSION } = require('./school-classes');
 const { CLASS_CATALOG } = require('./class-catalog');
-const { DEFAULT_ASSIGNMENTS, DISPLAY_NAMES } = require('./class-ownership');
+const { DEFAULT_ASSIGNMENTS, DISPLAY_NAMES, includeZhaiAssignments } = require('./class-ownership');
 const { gradeUnit2, unit2Summary } = require('./unit2');
 const { gradeLesson3 } = require('./lesson3');
 const { gradeLesson6 } = require('./lesson6');
@@ -10,7 +10,7 @@ const { position, courseLessons, courseCatalog, lessonProgress } = require('./co
 const { projectTeacherGrades } = require('./teacher-grades');
 
 const PROJECT_ID = 'lzrtc-public-english-2026';
-const TEACHERS = new Set(['cherie', 'lisa', 'alice', 'july']);
+const TEACHERS = new Set(Object.keys(DISPLAY_NAMES));
 const SKILLS = ['listening', 'speaking', 'reading', 'writing', 'vocabulary', 'grammar', 'pronunciation'];
 const COLLECTIONS = Object.freeze({
   students: 'english_archive_students', requests: 'english_archive_access_requests',
@@ -228,7 +228,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
   }
   async function teachingAssignments() {
     const stored = await get(COLLECTIONS.classNormalization, ASSIGNMENTS_ID);
-    return tagged(stored) && stored.kind === 'teacher-assignments' ? stored.assignments : DEFAULT_ASSIGNMENTS;
+    return tagged(stored) && stored.kind === 'teacher-assignments' ? includeZhaiAssignments(stored.assignments) : DEFAULT_ASSIGNMENTS;
   }
   function teacherCanSee(staff, className, assignments) {
     return staff.code === 'july' || (assignments[staff.code] || []).includes(normalizeSchoolClass(className));
@@ -746,7 +746,7 @@ function createApi({ db, storage, now = Date.now, maxRows = MAX_ROWS, logger = c
     if (action === 'saveTeacherAssignments') {
       if (staff.code !== 'july') fail(403, '仅 July 可以调整课程班级分工。');
       const candidate = body.assignments;
-      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || Object.keys(candidate).sort().join(',') !== [...TEACHERS].sort().join(',')) fail(400, '请提供四位老师的完整班级分工。');
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || Object.keys(candidate).sort().join(',') !== [...TEACHERS].sort().join(',')) fail(400, '请提供所有老师的完整班级分工。');
       const seen = new Set(); const cleaned = {};
       for (const code of TEACHERS) {
         if (!Array.isArray(candidate[code]) || candidate[code].length > CLASS_CATALOG.length) fail(400, '班级分工格式不正确。');

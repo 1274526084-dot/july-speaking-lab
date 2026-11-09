@@ -2118,6 +2118,11 @@
   background: linear-gradient(90deg, #b88856, #e0c7a0 38%, transparent 75%);
   pointer-events: none;
 }
+.at-dashboard-hero.at-dashboard-hero--zhai {
+  background-size: 100% 100%, auto 155%;
+  background-position: center, right 5%;
+  background-repeat: no-repeat;
+}
 .at-dashboard-intro, .at-dashboard-side { position: relative; z-index: 1; }
 .at-top-actions img.at-teacher-badge { display: block; width: 42px; height: 42px; padding: 0; object-fit: cover; border: 0; border-radius: 50%; box-shadow: none; }
 .at-owner-head { display: flex; align-items: center; gap: 15px; margin-bottom: 15px; }
