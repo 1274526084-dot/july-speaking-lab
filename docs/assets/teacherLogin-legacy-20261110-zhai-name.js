@@ -1,0 +1,1 @@
+System.register(["./chunks/school-class-filter-legacy-20261110-zhai-name.js","./chunks/main-legacy-20261110-zhai-name.js"],function(e,n){return{setters:[function(e){},function(e){}],execute:function(){}}});

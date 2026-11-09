@@ -2,7 +2,7 @@ export const TEACHER_OPTIONS = [
   { code: 'cherie', label: 'Cherie' },
   { code: 'lisa', label: 'Lisa' },
   { code: 'alice', label: 'Alice' },
-  { code: 'zhai', label: 'Zhai · 翟雪丽' },
+  { code: 'zhai', label: 'Zhai' },
   { code: 'july', label: 'July' },
 ];
 const TEACHER_CODES = new Set(TEACHER_OPTIONS.map(option => option.code));
