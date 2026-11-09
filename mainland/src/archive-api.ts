@@ -134,6 +134,7 @@ export type ArchiveTask = {
   material?: string;
   questions?: ArchiveQuestion[];
   teacherName?: string;
+  creator?: string;
   creatorName?: string;
 };
 export type ArchiveNews = {

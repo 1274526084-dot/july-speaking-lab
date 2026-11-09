@@ -5,6 +5,7 @@ import { availableCourseLessons, BUILTIN_COURSE_TASKS, courseLessonNumber, type 
 import { getTeacherToken } from './api';
 import { normalizeSchoolClass } from '@/lib/school-classes';
 import { ClassScoreBars, CourseTrendChart, ScoreDistribution } from './course-charts';
+import { TaskLiveStats, TaskReportControls, taskPreviewHref, teacherClasses, useTaskReports } from './teacher-task-tools';
 import './teacher-course-scores.css';
 
 type ScoreStudent = {
@@ -48,8 +49,8 @@ export function TeacherCourseScores({
     { number: 1, title: '校园与学习', lessons: [1, 2, 3] },
     { number: 2, title: '时间与人生', lessons: [3] },
   ]);
-  const [unit, setUnit] = useState(1);
-  const [lessonSelection, setLesson] = useState(1);
+  const [unit, setUnit] = useState(() => Number(new URLSearchParams(location.search).get('unit')) || 1);
+  const [lessonSelection, setLesson] = useState(() => Number(new URLSearchParams(location.search).get('lesson')) || 1);
   const [showAll, setShowAll] = useState(false);
   const [page, setPage] = useState(1);
   const [feedError, setFeedError] = useState('');
@@ -60,7 +61,7 @@ export function TeacherCourseScores({
       .then((feed) => {
         if (!active) return;
         if (feed.units?.length) setCourseUnits(feed.units);
-        if (feed.current) { setUnit(feed.current.unit); setLesson(feed.current.lesson); }
+        if (feed.current && !new URLSearchParams(location.search).has('unit')) { setUnit(feed.current.unit); setLesson(feed.current.lesson); }
         setFeedError('');
       })
       .catch(() => { if (active) setFeedError('课程目录暂未同步，仍可查看已记录的课次。'); });
@@ -151,6 +152,8 @@ export function TeacherCourseScores({
     return [...groups.values()].map((group) => ({ title: group.title, count: group.students.size, average: average(group.scores), change: average(group.changes) }))
       .sort((a, b) => b.count - a.count || a.title.localeCompare(b.title, 'zh-CN'));
   }, [students, unit, lesson]);
+  const taskClasses = teacherClasses({ assignedClasses, canManageCourse });
+  const reports = useTaskReports(taskClasses, unit, lesson, selectedTasks.length > 0);
   useEffect(() => { setPage(1); }, [students, unit, lesson, showAll]);
 
   return (
@@ -208,9 +211,11 @@ export function TeacherCourseScores({
       <div className="tc-split">
         <section className="tc-panel">
           <h3><ClipboardList /> 本课任务 <span>{selectedTasks.length} 项</span></h3>
-          {selectedTasks.length ? <div className="tc-task-list">{selectedTasks.map((task, index) => <article key={task.id || `${task.title}-${index}`}>
-            <div><strong>{task.title}</strong><span>{task.creatorName ? `${task.creatorName} 创建 · ` : ''}{typeName[task.type] || '课堂任务'} · {task.status === 'draft' ? '草稿' : '已发布'}</span></div>
-            {task.href && <a href={task.href} target="_blank" rel="noreferrer" aria-label={`查看${task.title}`}><ArrowRight /></a>}
+          <TaskReportControls classes={taskClasses} reports={reports} />
+          {selectedTasks.length ? <div className="tc-task-list">{selectedTasks.map((task, index) => <article className="tt-task-card" key={task.id || `${task.title}-${index}`}>
+            <header className="tt-task-head"><div><strong>{task.title}</strong><br /><span>{task.creatorName ? `${task.creatorName} 创建 · ` : ''}{typeName[task.type] || '课堂任务'} · {task.status === 'draft' ? '草稿' : '已发布'}</span></div>
+            {task.id && <a href={taskPreviewHref(task.id, reports.className, 'scores')}>教师预览 <ArrowRight /></a>}</header>
+            {task.id && <TaskLiveStats key={`${task.id}:${reports.className}`} taskId={task.id} unit={unit} lesson={lesson} reports={reports} />}
           </article>)}</div> : <p className="tc-empty">这节课还没有任务。可在“任务与组题”中添加。</p>}
         </section>
         <section className="tc-panel">

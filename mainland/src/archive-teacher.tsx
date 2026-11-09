@@ -445,6 +445,8 @@ export function ArchiveTeacher() {
       ? 'overview'
       : new URLSearchParams(location.search).get('tab') === 'devices'
       ? 'devices'
+      : new URLSearchParams(location.search).get('tab') === 'tasks'
+        ? 'tasks'
       : ['unit2', 'scores'].includes(new URLSearchParams(location.search).get('tab') || '')
         ? 'scores'
         : 'students',

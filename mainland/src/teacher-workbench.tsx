@@ -50,11 +50,10 @@ type LoginResult = {
 };
 
 export function TeacherWorkbenchLogin() {
-  const destination =
-    new URLSearchParams(window.location.search).get('next') ===
-    'archive/teacher'
-      ? sitePath('archive/teacher')
-      : sitePath('workbench');
+  const params = new URLSearchParams(window.location.search);
+  const archiveDestination = params.get('next') === 'archive/teacher';
+  const taskId = params.get('task');
+  const destination = archiveDestination ? `${sitePath('archive/teacher')}${taskId ? `?${new URLSearchParams({ task: taskId })}` : ''}` : sitePath('workbench');
   const [code, setCode] = useState('july');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -63,12 +62,12 @@ export function TeacherWorkbenchLogin() {
   useEffect(() => {
     if (
       getTeacherToken() &&
-      (destination === sitePath('archive/teacher') ||
+      (archiveDestination ||
         (getWordToken() && (code !== 'july' || getProfileTeacherToken())))
     ) {
       window.location.replace(destination);
     }
-  }, [code, destination]);
+  }, [code, destination, archiveDestination]);
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -76,7 +75,7 @@ export function TeacherWorkbenchLogin() {
     setLoading(true);
     setError('');
     try {
-      if (destination === sitePath('archive/teacher')) {
+      if (archiveDestination) {
         const teacher = await cloudbaseRequest<LoginResult>('teacherLogin', {
           code,
           password,

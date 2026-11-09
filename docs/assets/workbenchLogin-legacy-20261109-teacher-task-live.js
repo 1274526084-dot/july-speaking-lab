@@ -1,0 +1,1 @@
+System.register(["./chunks/school-class-filter-legacy-20261109-teacher-task-live.js","./chunks/main-legacy-20261109-teacher-task-live.js"],function(e,t){return{setters:[function(e){},function(e){}],execute:function(){}}});

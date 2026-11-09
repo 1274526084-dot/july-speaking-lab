@@ -18,8 +18,9 @@ import {
   getCourseStudent,
   getCourseIdentity,
 } from './course-session';
-import { createSchoolClassDirectory } from '@/lib/school-classes';
+import { createSchoolClassDirectory, normalizeSchoolClass } from '@/lib/school-classes';
 import { SchoolClassFilter } from '@/components/school-class-filter';
+import { TaskLiveStats, TaskReportControls, taskPreviewHref, teacherClasses, useTaskReports } from './teacher-task-tools';
 import './course-board.css';
 
 type Unit = { number: number; title: string; lessons: number[] };
@@ -47,7 +48,7 @@ export type CourseProgress = {
   unassignedWordCount: number;
 };
 type CourseFeed = {
-  teacher?: { code: string; canManageCourse?: boolean };
+  teacher?: { code: string; canManageCourse?: boolean; assignedClasses?: string[] };
   units: Unit[];
   current: { unit: number; lesson: number };
   tasks: ArchiveTask[];
@@ -315,6 +316,8 @@ export function CourseBoard({
   const displayedLesson = lessonNumbers.includes(requestedLesson)
     ? requestedLesson
     : lessonNumbers[0];
+  const taskClasses = teacherClasses(feed.teacher);
+  const previewOrigin = location.pathname.replace(/\/+$/, '').endsWith('/workbench') ? 'workbench' : 'tasks';
   const scoreLoad = useCallback(async () => {
     if (teacher && view !== 'scores') return;
     const token = teacher
@@ -371,17 +374,17 @@ export function CourseBoard({
         !task.classes?.length ||
         (className && task.classes.includes(className)),
     );
-  const allTasks = [...BUILTIN_COURSE_TASKS, ...tasks].filter(
-    (task) =>
-      teacher ||
-      !task.classes?.length ||
-      (className && task.classes.includes(className)),
-  );
+  const allTasks = [...BUILTIN_COURSE_TASKS, ...tasks].filter(task => {
+    if (!teacher) return !task.classes?.length || (className && task.classes.includes(className));
+    if (!feed.teacher || feed.teacher.canManageCourse || task.creator === feed.teacher.code || task.id.startsWith('builtin-')) return true;
+    return task.status === 'published' && (!task.classes?.length || task.classes.some(label => taskClasses.includes(normalizeSchoolClass(label))));
+  });
   const selectedTasks = allTasks.filter(
     (task) =>
       coordinate(task.unit) === displayedUnit &&
       coordinate(task.lesson) === displayedLesson,
   );
+  const reports = useTaskReports(taskClasses, displayedUnit, displayedLesson, teacher && view === 'tasks' && selectedTasks.length > 0);
   const selectedResult = (progress || personal)?.lessons.find(
     (item) => item.unit === displayedUnit && item.lesson === displayedLesson,
   );
@@ -606,9 +609,11 @@ export function CourseBoard({
               </button>
             )}
           </div>
+          {teacher && <TaskReportControls classes={taskClasses} reports={reports} />}
           <div className="course-task-grid">
             {selectedTasks.map((task, i) => (
-              <article key={task.id} className="course-task">
+              <article key={task.id} className={teacher ? 'tt-task-card' : undefined}>
+              <div className="course-task">
                 <span className="course-order">{i + 1}</span>
                 <div>
                   <h4>{task.title}</h4>
@@ -626,23 +631,22 @@ export function CourseBoard({
                     </a>
                   )}
                 </div>
-                {teacher && !task.id.startsWith('builtin-') ? (
-                  <button
-                    onClick={() =>
-                      onTask?.(displayedUnit, displayedLesson, task)
-                    }
-                  >
-                    编辑
-                  </button>
+                {teacher ? (
+                  <div className="tt-actions">
+                    <a href={taskPreviewHref(task.id, reports.className, previewOrigin)}>教师预览 <ArrowRight size={16} /></a>
+                    {!task.id.startsWith('builtin-') && <button type="button" onClick={() => onTask?.(displayedUnit, displayedLesson, task)}>编辑</button>}
+                  </div>
                 ) : (
                   <button
                     disabled={!safeHref(task.href) && task.type !== 'quiz'}
                     onClick={() => open(task)}
                   >
-                    {teacher ? '预览' : '开始'}
+                    开始
                     <ArrowRight size={16} />
                   </button>
                 )}
+              </div>
+              {teacher && <TaskLiveStats key={`${task.id}:${reports.className}`} taskId={task.id} unit={displayedUnit} lesson={displayedLesson} reports={reports} />}
               </article>
             ))}
           </div>
