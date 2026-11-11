@@ -52,6 +52,28 @@ type AttemptRow = {
   submitted_at: number;
 };
 
+const PAGE_SIZE = 30;
+
+function RecordPager({
+  page, total, loading, label, onPage,
+}: {
+  page: number;
+  total: number;
+  loading: boolean;
+  label: string;
+  onPage: (page: number) => void;
+}) {
+  return (
+    <nav aria-label={label} className="flex flex-wrap items-center justify-between gap-3 text-sm text-[#687168]">
+      <span>第 {page + 1} / {Math.max(1, Math.ceil(total / PAGE_SIZE))} 页 · 每页 {PAGE_SIZE} 条</span>
+      <div className="flex gap-2">
+        <button type="button" disabled={loading || page === 0} onClick={() => onPage(page - 1)} className="focus-ring rounded-xl border px-3 py-2 disabled:opacity-40">上一页</button>
+        <button type="button" disabled={loading || (page + 1) * PAGE_SIZE >= total} onClick={() => onPage(page + 1)} className="focus-ring rounded-xl border px-3 py-2 disabled:opacity-40">下一页 · 更早记录</button>
+      </div>
+    </nav>
+  );
+}
+
 function parseAudio(value: string | null): AudioMeta[] {
   if (!value) return [];
   try {
@@ -94,24 +116,27 @@ export function TeacherApp() {
   const [teacherName, setTeacherName] = useState('');
 
   useEffect(() => {
+    let active = true;
     const token = getTeacherToken();
     if (!token) {
       window.location.replace(sitePath('teacher/login'));
       return;
     }
     setLoading(true);
+    setError('');
     void cloudbaseRequest<{ rows: AttemptRow[]; total: number; teacherName?: string }>(
       'list',
-      { offset: page * 30, limit: 30 },
+      { offset: page * PAGE_SIZE, limit: PAGE_SIZE },
       token,
     )
       .then((payload) => {
-        if (!payload) return;
+        if (!active || !payload) return;
         setRows(payload.rows || []);
         setTotal(payload.total || 0);
         setTeacherName(payload.teacherName || '');
       })
       .catch((requestError) => {
+        if (!active) return;
         const message = requestError instanceof Error ? requestError.message : '学生数据加载失败。';
         if (message.includes('登录已失效')) {
           clearTeacherToken();
@@ -120,7 +145,8 @@ export function TeacherApp() {
           setError(message);
         }
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [page]);
 
   const classDirectory = useMemo(() => createClassDirectory(rows, CLASS_CATALOG.map(class_name => ({ class_name }))), [rows]);
@@ -234,10 +260,12 @@ export function TeacherApp() {
             <button
               type="button"
               onClick={exportCsv}
+              disabled={loading || Boolean(error)}
+              aria-label="导出当前页筛选结果"
               className="focus-ring inline-flex items-center gap-2 rounded-xl bg-[#416b36] px-4 py-2.5 text-sm font-bold text-white"
             >
               <Download className="h-4 w-4" />{' '}
-              <span className="hidden sm:inline">导出CSV</span>
+              <span className="hidden sm:inline">导出本页CSV</span>
             </button>
             <button
               onClick={() => void logout()}
@@ -254,23 +282,23 @@ export function TeacherApp() {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Metric
             icon={<Users className="h-5 w-5 text-[#ea5a0b]" />}
-            value={studentCount}
-            label="提交学生"
+            value={total}
+            label="历史练习记录"
           />
           <Metric
             icon={<MessageSquareText className="h-5 w-5 text-[#ea5a0b]" />}
-            value={filteredRows.length}
-            label="练习记录"
+            value={studentCount}
+            label="本页匹配学生"
           />
           <Metric
             icon={<BarChart3 className="h-5 w-5 text-[#ea5a0b]" />}
             value={scoredRows.length ? `${averageScore}分` : '—'}
-            label="平均得分"
+            label="本页平均得分"
           />
           <Metric
             icon={<Headphones className="h-5 w-5 text-[#ea5a0b]" />}
             value={recordingCount}
-            label="可回听记录"
+            label="本页可回听记录"
           />
         </div>
 
@@ -280,16 +308,17 @@ export function TeacherApp() {
               <div>
                 <h2 className="font-bold">口语练习记录</h2>
                 <p className="mt-1 text-sm text-[#7a7168]">
-                  共 {total} 条；当前页可筛选、导出和回听录音。评分为任务型学习反馈，不是专业语音测评。
+                  共 {total} 条历史记录，按提交时间由近到远排列。点击「下一页」查看更早记录。
                 </p>
               </div>
               <p
                 aria-live="polite"
                 className="rounded-full bg-[#edf6f8] px-3 py-1.5 text-sm font-bold text-[#315f6b]"
               >
-                显示 {filteredRows.length} / {rows.length} 条
+                {total ? `第 ${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, total)} 条` : '暂无记录'}
               </p>
             </div>
+            <p className="mt-2 text-xs text-[#7a7168]">班级筛选、均分及导出以当前页为准；本页匹配 {filteredRows.length} 条。</p>
 
             <div className="mt-4 grid gap-3 md:grid-cols-3">
               <SchoolClassFilter college={collegeFilter} classKey={classFilter} groups={classGroups} onCollege={setCollegeFilter} onClass={setClassFilter} className="focus-ring h-12 w-full rounded-2xl border border-[#d9c4b2] bg-[#fffaf6] px-3 text-base" />
@@ -323,7 +352,7 @@ export function TeacherApp() {
                   onClick={() => { setClassKeyword(''); setClassFilter(''); }}
                   className={`focus-ring rounded-full border px-3 py-2 text-sm font-bold ${!classKeyword && !classFilter ? 'border-[#416b36] bg-[#416b36] text-white' : 'border-[#d8c5b5] bg-white text-[#655c54]'}`}
                 >
-                  全部 · {rows.length}
+                  本页全部 · {rows.length}
                 </button>
                 {classGroups.filter(group => !collegeFilter || group.college === collegeFilter).map((group) => {
                   const active = classFilter === group.key;
@@ -341,11 +370,7 @@ export function TeacherApp() {
               </div>
             </div>
             <ClassGroupingNote groups={classGroups} />
-            <div className="mt-4 flex items-center justify-end gap-3 text-sm text-[#687168]">
-              <span>第 {page + 1} / {Math.max(1, Math.ceil(total / 30))} 页</span>
-              <button type="button" disabled={page === 0} onClick={() => setPage(page - 1)} className="focus-ring rounded-xl border px-3 py-2 disabled:opacity-40">上一页</button>
-              <button type="button" disabled={(page + 1) * 30 >= total} onClick={() => setPage(page + 1)} className="focus-ring rounded-xl border px-3 py-2 disabled:opacity-40">下一页</button>
-            </div>
+            <div className="mt-4"><RecordPager page={page} total={total} loading={loading} label="列表上方翻页" onPage={setPage} /></div>
           </div>
 
           {loading && (
@@ -468,19 +493,22 @@ export function TeacherApp() {
               {rows.length > 0 && filteredRows.length === 0 && (
                 <div className="px-5 py-16 text-center">
                   <p className="font-bold text-[#59645a]">
-                    没有找到包含“{classKeyword.trim()}”的班级
+                    本页没有符合筛选的记录，可以翻页查看更早提交。
                   </p>
                   <button
                     type="button"
-                    onClick={() => setClassKeyword('')}
+                    onClick={() => { setClassKeyword(''); setClassFilter(''); setCollegeFilter(''); }}
                     className="focus-ring mt-3 rounded-xl bg-[#416b36] px-4 py-2.5 text-sm font-bold text-white"
                   >
-                    查看全部记录
+                    查看本页全部记录
                   </button>
                 </div>
               )}
             </div>
           )}
+          <div className="border-t border-[#eee0d4] px-5 py-4">
+            <RecordPager page={page} total={total} loading={loading} label="列表底部翻页" onPage={setPage} />
+          </div>
         </div>
       </section>
     </main>

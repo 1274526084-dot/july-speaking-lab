@@ -1,0 +1,1 @@
+System.register(["./chunks/profile-api-legacy-20261111-speaking-history.js","./chunks/main-legacy-20261111-speaking-history.js"],function(e,n){return{setters:[function(e){},function(e){}],execute:function(){}}});
