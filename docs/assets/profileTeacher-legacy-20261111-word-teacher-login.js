@@ -1,0 +1,1 @@
+System.register(["./chunks/profile-api-legacy-20261111-word-teacher-login.js","./chunks/profile-main-legacy-20261111-word-teacher-login.js"],function(e,n){return{setters:[function(e){},function(e){}],execute:function(){}}});

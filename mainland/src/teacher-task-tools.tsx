@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ArrowLeft, BarChart3, Eye, RefreshCw, Sparkles } from 'lucide-react';
 import { CLASS_CATALOG, DEFAULT_CLASS } from '@/lib/class-catalog';
 import { scenes } from '@/lib/scenes';
-import { getTeacherToken, sitePath } from './api';
+import { clearTeacherToken, getTeacherToken, sitePath } from './api';
 import { ArchiveError, archiveRequest, type ArchiveTask } from './archive-api';
 import './teacher-task-tools.css';
 
@@ -159,9 +159,13 @@ export function TeacherTaskPage({ taskId }: { taskId: string }) {
   useEffect(() => {
     if (signIn) return;
     let active = true;
-    archiveRequest<NonNullable<typeof result>>('teacherTaskPreview', { taskId }, getTeacherToken()).then(value => { if (active) setResult(value); }).catch(err => {
+    const token = getTeacherToken();
+    archiveRequest<NonNullable<typeof result>>('teacherTaskPreview', { taskId }, token).then(value => { if (active) setResult(value); }).catch(err => {
       if (!active) return;
-      if (err instanceof ArchiveError && err.status === 401) setSignIn(true);
+      if (err instanceof ArchiveError && err.status === 401) {
+        if (getTeacherToken() === token) clearTeacherToken();
+        setSignIn(true);
+      }
       else setError(err instanceof Error ? err.message : '任务预览暂未载入。');
     });
     return () => { active = false; };

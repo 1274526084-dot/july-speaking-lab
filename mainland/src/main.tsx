@@ -6,9 +6,11 @@ import { TeacherLogin } from './teacher-login';
 import { LearningHub } from './learning-hub';
 import { TeacherWorkbench, TeacherWorkbenchLogin } from './teacher-workbench';
 import { CLOUDBASE_API_URL, sitePath } from './api';
+import { followTeacherSessionChanges } from './teacher-session';
 import './styles.css';
 
 const path = window.location.pathname.replace(/\/+$/, '') || '/';
+if (/\/(?:workbench|teacher)(?:\/login)?$/.test(path)) followTeacherSessionChanges();
 const content = path.endsWith('/workbench/login')
   ? <TeacherWorkbenchLogin />
   : path.endsWith('/workbench')

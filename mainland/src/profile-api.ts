@@ -1,7 +1,7 @@
 import { projectSchoolPayload, projectSchoolSubmission } from '@/lib/school-classes';
+import { PROFILE_TEACHER_TOKEN_KEY as TOKEN_KEY, clearSharedProfileToken, getTeacherSession } from './teacher-session';
 export const PROFILE_API_URL = 'https://cloudbase-d3gxxe4l88c3d5907-1431364187.ap-shanghai.app.tcloudbase.com/studentProfileApi';
 
-const TOKEN_KEY = 'july-english-profile.teacher-token';
 const PROFILE_KEY = 'july-english-profile.student-key';
 const siteBase = import.meta.env.BASE_URL.replace(/\/$/, '');
 
@@ -11,7 +11,7 @@ export function profilePath(path = '') {
 }
 
 export function getProfileTeacherToken() {
-  return window.sessionStorage.getItem(TOKEN_KEY) || '';
+  return window.sessionStorage.getItem(TOKEN_KEY) || getTeacherSession()?.profileToken || '';
 }
 
 export function setProfileTeacherToken(token: string) {
@@ -20,6 +20,7 @@ export function setProfileTeacherToken(token: string) {
 
 export function clearProfileTeacherToken() {
   window.sessionStorage.removeItem(TOKEN_KEY);
+  clearSharedProfileToken();
 }
 
 export function getStudentProfileKey() {

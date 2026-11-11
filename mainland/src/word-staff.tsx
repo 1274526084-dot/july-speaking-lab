@@ -31,15 +31,18 @@ import { CLASS_CATALOG } from '@/lib/class-catalog';
 import { ClassGroupingNote } from '@/components/class-grouping-note';
 import {
   clearWordSession,
-  getWordRole,
   getWordToken,
   setWordSession,
+  WordApiError,
   type WordAttempt,
   type WordItem,
   type WordUnit,
   wordPath,
   wordRequest,
 } from './word-api';
+import { sitePath } from './api';
+import { signOutTeacher, wordTeacherLoginPath } from './teacher-access';
+import { clearTeacherSession, getTeacherSession } from './teacher-session';
 import { WordDemoAudio } from './word-demo-audio';
 import { parseWordImport } from './word-import';
 
@@ -82,8 +85,7 @@ function shareUrl(unit: UnitRow) {
   return `${window.location.origin}${wordPath()}?unit=${unit.share_code}`;
 }
 
-function StaffLogin({ mode }: { mode: 'teacher' | 'admin' }) {
-  const [code, setCode] = useState('');
+function AdminLogin() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -94,7 +96,7 @@ function StaffLogin({ mode }: { mode: 'teacher' | 'admin' }) {
     try {
       const payload = await wordRequest<{ token: string; role: string }>(
         'login',
-        { mode, code, password },
+        { mode: 'admin', password },
       );
       setWordSession(payload.token, payload.role);
       window.location.reload();
@@ -117,28 +119,13 @@ function StaffLogin({ mode }: { mode: 'teacher' | 'admin' }) {
             July Word Sound Lab
           </p>
           <h1 className="mt-2 text-3xl font-black text-white">
-            {mode === 'admin' ? '管理员登录' : '教师工作台'}
+            管理员登录
           </h1>
           <p className="mt-3 text-indigo-100">
-            {mode === 'admin'
-              ? '管理教师账号并查看全部教学数据'
-              : '智能生成词典发音，查看自己负责班级的练习数据'}
+            管理教师账号并查看全部教学数据
           </p>
         </div>
         <form onSubmit={submit} className="space-y-5 p-7">
-          {mode === 'teacher' && (
-            <label className="word-label">
-              教师代码
-              <input
-                required
-                autoComplete="username"
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
-                className="word-input mt-2"
-                placeholder="如：july"
-              />
-            </label>
-          )}
           <label className="word-label">
             密码
             <div className="relative mt-2">
@@ -160,7 +147,7 @@ function StaffLogin({ mode }: { mode: 'teacher' | 'admin' }) {
             </p>
           )}
           <button
-            disabled={loading || !password || (mode === 'teacher' && !code)}
+            disabled={loading || !password}
             className="word-primary w-full"
           >
             {loading ? (
@@ -177,10 +164,10 @@ function StaffLogin({ mode }: { mode: 'teacher' | 'admin' }) {
               学生练习
             </a>
             <a
-              href={mode === 'admin' ? wordPath('teacher') : wordPath('admin')}
+              href={wordPath('teacher')}
               className="text-slate-500"
             >
-              {mode === 'admin' ? '教师登录' : '管理员入口'}
+              教师登录
             </a>
           </div>
         </form>
@@ -193,10 +180,12 @@ function StaffHeader({
   title,
   subtitle,
   onLogout,
+  backHref,
 }: {
   title: string;
   subtitle: string;
   onLogout: () => void;
+  backHref?: string;
 }) {
   return (
     <header className="word-nav">
@@ -211,9 +200,12 @@ function StaffHeader({
             <p className="hidden text-xs text-slate-500 sm:block">{subtitle}</p>
           </div>
         </div>
-        <button onClick={onLogout} className="word-icon" aria-label="退出登录">
-          <LogOut className="h-5 w-5" />
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {backHref && <a href={backHref} className="word-secondary text-sm">返回课堂工作台</a>}
+          <button onClick={onLogout} className="word-icon" aria-label="退出登录">
+            <LogOut className="h-5 w-5" />
+          </button>
+        </div>
       </div>
     </header>
   );
@@ -991,7 +983,7 @@ function AttemptPager({ page, total, onPage }: { page: number; total: number; on
   );
 }
 
-function TeacherApp() {
+function TeacherApp({ add }: { add: boolean }) {
   const [name, setName] = useState('教师');
   const [tab, setTab] = useState<'units' | 'shared' | 'data'>('units');
   const [units, setUnits] = useState<UnitRow[]>([]);
@@ -1001,34 +993,41 @@ function TeacherApp() {
   const [attemptPage, setAttemptPage] = useState(0);
   const [attemptLoading, setAttemptLoading] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<UnitRow | null | 'new'>(null);
+  const [editing, setEditing] = useState<UnitRow | null | 'new'>(add ? 'new' : null);
   const [expanded, setExpanded] = useState('');
   const [notice, setNotice] = useState('');
   const [qrUnit, setQrUnit] = useState<UnitRow | null>(null);
   async function load() {
     setLoading(true);
+    const token = getWordToken();
     try {
       const session = await wordRequest<{ name: string }>(
         'session',
         {},
-        getWordToken(),
+        token,
       );
       setName(session.name);
       const [unitData, sharedData] = await Promise.all([
         wordRequest<{ rows: UnitRow[] }>(
           'teacherListUnits',
           {},
-          getWordToken(),
+          token,
         ),
         wordRequest<{ rows: SharedUnitRow[] }>(
           'teacherListSharedUnits',
           {},
-          getWordToken(),
+          token,
         ),
       ]);
       setUnits(unitData.rows || []);
       setSharedUnits(sharedData.rows || []);
     } catch (requestError) {
+      if (requestError instanceof WordApiError && requestError.status === 401 && getWordToken() === token) {
+        if (getTeacherSession()) clearTeacherSession();
+        else clearWordSession();
+        window.location.replace(wordTeacherLoginPath(add));
+        return;
+      }
       setNotice(requestError instanceof Error ? requestError.message : '数据加载失败，请重试。');
     } finally {
       setLoading(false);
@@ -1083,9 +1082,12 @@ function TeacherApp() {
     void load();
   }
   async function logout() {
-    await wordRequest('logout', {}, getWordToken()).catch(() => undefined);
-    clearWordSession();
-    window.location.reload();
+    if (getTeacherSession()) await signOutTeacher();
+    else {
+      await wordRequest('logout', {}, getWordToken()).catch(() => undefined);
+      clearWordSession();
+    }
+    window.location.replace(wordTeacherLoginPath());
   }
   return (
     <main className="word-shell min-h-screen pb-12">
@@ -1093,6 +1095,7 @@ function TeacherApp() {
         title={`${name}的教师工作台`}
         subtitle="自己的单元独立发布；已发布任务可供教师互相应用"
         onLogout={() => void logout()}
+        backHref={sitePath('workbench')}
       />
       <section className="mx-auto max-w-7xl px-5 pt-6">
         <div className="word-tabs">
@@ -1303,8 +1306,8 @@ function AdminApp() {
   async function load() {
     setLoading(true);
     try {
-      await wordRequest('session', {}, getWordToken());
-      const teacherData = await wordRequest<{ rows: Teacher[] }>('adminListTeachers', {}, getWordToken());
+      await wordRequest('session', {}, getWordToken('admin'));
+      const teacherData = await wordRequest<{ rows: Teacher[] }>('adminListTeachers', {}, getWordToken('admin'));
       setTeachers(teacherData.rows || []);
     } catch (requestError) {
       setNotice(requestError instanceof Error ? requestError.message : '数据加载失败，请重试。');
@@ -1320,7 +1323,7 @@ function AdminApp() {
     let active = true;
     setAttemptLoading(true);
     setAttempts([]);
-    void wordRequest<{ rows: WordAttempt[]; total: number }>('listAttempts', { offset: attemptPage * 30, limit: 30 }, getWordToken())
+    void wordRequest<{ rows: WordAttempt[]; total: number }>('listAttempts', { offset: attemptPage * 30, limit: 30 }, getWordToken('admin'))
       .then((result) => {
         if (!active) return;
         setAttempts(result.rows || []);
@@ -1339,7 +1342,7 @@ function AdminApp() {
       await wordRequest(
         'adminCreateTeacher',
         { name, code, password },
-        getWordToken(),
+        getWordToken('admin'),
       );
       setName('');
       setCode('');
@@ -1356,7 +1359,7 @@ function AdminApp() {
     await wordRequest(
       'adminSetTeacherActive',
       { teacherId: teacher.id, active: !teacher.active },
-      getWordToken(),
+      getWordToken('admin'),
     );
     await load();
   }
@@ -1367,7 +1370,7 @@ function AdminApp() {
       await wordRequest(
         'adminResetTeacher',
         { teacherId: teacher.id, password: next },
-        getWordToken(),
+        getWordToken('admin'),
       );
       setNotice(`${teacher.name} 的密码已重置。`);
     } catch (requestError) {
@@ -1377,7 +1380,7 @@ function AdminApp() {
     }
   }
   async function logout() {
-    await wordRequest('logout', {}, getWordToken()).catch(() => undefined);
+    await wordRequest('logout', {}, getWordToken('admin')).catch(() => undefined);
     clearWordSession();
     window.location.reload();
   }
@@ -1512,9 +1515,14 @@ function AdminApp() {
   );
 }
 
+function RedirectToTeacherLogin({ add }: { add: boolean }) {
+  const href = wordTeacherLoginPath(add);
+  useEffect(() => window.location.replace(href), [href]);
+  return <main className="word-shell grid min-h-screen place-items-center"><a className="word-secondary" href={href}>前往教师统一登录</a></main>;
+}
+
 export function WordStaff({ mode }: { mode: 'teacher' | 'admin' }) {
-  const token = getWordToken();
-  const role = getWordRole();
-  if (!token || role !== mode) return <StaffLogin mode={mode} />;
-  return mode === 'admin' ? <AdminApp /> : <TeacherApp />;
+  if (mode === 'admin') return getWordToken('admin') ? <AdminApp /> : <AdminLogin />;
+  const add = new URLSearchParams(window.location.search).get('action') === 'add';
+  return getWordToken() ? <TeacherApp add={add} /> : <RedirectToTeacherLogin add={add} />;
 }

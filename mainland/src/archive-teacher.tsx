@@ -47,7 +47,8 @@ import {
   type RailwayQuestion,
 } from '@/lib/railway-question-bank';
 import { RAILWAY_NEWS_SEEDS } from '@/lib/railway-news';
-import { getTeacherToken, sitePath } from './api';
+import { clearTeacherToken, getTeacherToken, sitePath } from './api';
+import { getTeacherSession, HUB_TEACHER_KEY } from './teacher-session';
 import { ArchiveError, archiveRequest, type Unit2Summary } from './archive-api';
 import { Unit2Panel } from './unit2-panel';
 import { CourseBoard, courseLessonNumber, availableCourseLessons, type CourseProgress } from './course-board';
@@ -484,9 +485,10 @@ export function ArchiveTeacher() {
   const [newsEditor, setNewsEditor] = useState<ArchiveNews | null>(null);
   const token = getTeacherToken();
   const teacherName =
-    window.sessionStorage.getItem('july-english-hub.teacher-name') || 'Teacher';
+    getTeacherSession()?.name || window.sessionStorage.getItem(HUB_TEACHER_KEY) || 'Teacher';
   const load = useCallback(async (silent = false) => {
-    if (!getTeacherToken()) {
+    const requestToken = getTeacherToken();
+    if (!requestToken) {
       window.location.replace(
         `${sitePath('workbench/login')}?next=archive/teacher`,
       );
@@ -498,7 +500,7 @@ export function ArchiveTeacher() {
       const payload = await archiveRequest<Dashboard>(
         'teacherDashboard',
         {},
-        getTeacherToken(),
+        requestToken,
       );
       setData({
         ...payload,
@@ -509,8 +511,8 @@ export function ArchiveTeacher() {
       });
       setError('');
     } catch (requestError) {
-      if (requestError instanceof ArchiveError && requestError.status === 401) {
-        window.sessionStorage.removeItem('july-speaking-lab.teacher-token');
+      if (requestError instanceof ArchiveError && requestError.status === 401 && getTeacherToken() === requestToken) {
+        clearTeacherToken();
         window.location.replace(
           `${sitePath('workbench/login')}?next=archive/teacher`,
         );

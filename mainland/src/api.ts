@@ -1,7 +1,7 @@
 import { projectSchoolPayload, projectSchoolSubmission } from '@/lib/school-classes';
+import { TEACHER_TOKEN_KEY as TOKEN_KEY, clearTeacherSession, getTeacherSession } from './teacher-session';
 export const CLOUDBASE_API_URL = 'https://cloudbase-d3gxxe4l88c3d5907-1431364187.ap-shanghai.app.tcloudbase.com/speakingLabApi';
 
-const TOKEN_KEY = 'july-speaking-lab.teacher-token';
 const siteBase = import.meta.env.BASE_URL.replace(/\/$/, '');
 
 export function sitePath(path = '') {
@@ -10,7 +10,7 @@ export function sitePath(path = '') {
 }
 
 export function getTeacherToken() {
-  return window.sessionStorage.getItem(TOKEN_KEY) || '';
+  return getTeacherSession()?.teacherToken || window.sessionStorage.getItem(TOKEN_KEY) || '';
 }
 
 export function setTeacherToken(token: string) {
@@ -18,6 +18,7 @@ export function setTeacherToken(token: string) {
 }
 
 export function clearTeacherToken() {
+  if (getTeacherSession()) clearTeacherSession();
   window.sessionStorage.removeItem(TOKEN_KEY);
 }
 

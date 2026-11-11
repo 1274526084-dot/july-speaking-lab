@@ -1,5 +1,6 @@
 import {
   KeyRound,
+  Headphones,
   LoaderCircle,
   LockKeyhole,
   LogOut,
@@ -14,33 +15,20 @@ import {
 } from './archive-teacher';
 import { CLASS_CATALOG } from '@/lib/class-catalog';
 import { ClassroomAccess } from './classroom-access';
+import { ArchiveError, archiveRequest } from './archive-api';
 import {
-  archiveRequest,
-} from './archive-api';
-import {
-  clearTeacherToken,
   cloudbaseRequest,
   getTeacherToken,
-  setTeacherToken,
   sitePath,
 } from './api';
 import {
-  clearProfileTeacherToken,
-  getProfileTeacherToken,
   profilePath,
   profileRequest,
-  setProfileTeacherToken,
 } from './profile-api';
-import {
-  clearWordSession,
-  getWordToken,
-  setWordSession,
-  wordPath,
-  wordRequest,
-} from './word-api';
+import { getWordToken, setWordSession, wordPath, wordRequest } from './word-api';
+import { signOutTeacher, wordTeacherPath } from './teacher-access';
+import { clearTeacherSession, getTeacherSession, rememberTeacherSession } from './teacher-session';
 import { TEACHER_OPTIONS, teacherPortrait } from './teacher-persona';
-
-const HUB_TEACHER_KEY = 'july-english-hub.teacher-name';
 
 type LoginResult = {
   ok?: boolean;
@@ -52,64 +40,56 @@ type LoginResult = {
 export function TeacherWorkbenchLogin() {
   const params = new URLSearchParams(window.location.search);
   const archiveDestination = params.get('next') === 'archive/teacher';
+  const wordDestination = params.get('next') === 'words/teacher';
   const taskId = params.get('task');
-  const destination = archiveDestination ? `${sitePath('archive/teacher')}${taskId ? `?${new URLSearchParams({ task: taskId })}` : ''}` : sitePath('workbench');
+  const destination = archiveDestination
+    ? `${sitePath('archive/teacher')}${taskId ? `?${new URLSearchParams({ task: taskId })}` : ''}`
+    : wordDestination ? wordTeacherPath(params.get('action') === 'add') : sitePath('workbench');
   const [code, setCode] = useState('july');
+  const [otherCode, setOtherCode] = useState('');
+  const wordOnly = wordDestination && code === 'other';
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (
-      getTeacherToken() &&
-      (archiveDestination ||
-        (getWordToken() && (code !== 'july' || getProfileTeacherToken())))
-    ) {
+    if (getTeacherSession() || (archiveDestination && getTeacherToken()) || (wordDestination && getWordToken())) {
       window.location.replace(destination);
     }
-  }, [code, destination, archiveDestination]);
+  }, [destination, archiveDestination, wordDestination]);
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (loading || !code || !password) return;
+    if (loading || !code || !password || (wordOnly && !otherCode.trim())) return;
     setLoading(true);
     setError('');
     try {
-      if (archiveDestination) {
-        const teacher = await cloudbaseRequest<LoginResult>('teacherLogin', {
-          code,
-          password,
-        });
-        if (!teacher.token) throw new Error('教师账号或密码不正确。');
-        setTeacherToken(teacher.token);
-        window.sessionStorage.setItem(HUB_TEACHER_KEY, teacher.name || code);
+      if (wordOnly) {
+        const word = await wordRequest<LoginResult>('login', { mode: 'teacher', code: otherCode.trim(), password });
+        if (!word.token || word.role !== 'teacher') throw new Error('教师账号或密码不正确。');
+        setWordSession(word.token, word.role);
         window.location.replace(destination);
         return;
       }
+      const issuedAt = Date.now();
       const [speaking, word] = await Promise.all([
         cloudbaseRequest<LoginResult>('teacherLogin', { code, password }),
         wordRequest<LoginResult>('login', { mode: 'teacher', code, password }),
       ]);
-      if (!speaking.token || !word.token)
+      if (!speaking.token || !word.token || word.role !== 'teacher')
         throw new Error('教师账号或密码不正确。');
-      setTeacherToken(speaking.token);
-      setWordSession(word.token, word.role || 'teacher');
-      if (code.toLowerCase() === 'july') {
-        const profile = await profileRequest<LoginResult>('teacherLogin', {
-          code,
-          password,
-        });
-        if (!profile.token) throw new Error('学情档案登录失败，请重试。');
-        setProfileTeacherToken(profile.token);
-      } else {
-        clearProfileTeacherToken();
-      }
-      window.sessionStorage.setItem(HUB_TEACHER_KEY, speaking.name || code);
+      const profile = code === 'july'
+        ? await profileRequest<LoginResult>('teacherLogin', { code, password }).catch(() => null)
+        : null;
+      rememberTeacherSession({
+        teacherToken: speaking.token,
+        wordToken: word.token,
+        profileToken: profile?.token,
+        code,
+        name: speaking.name || word.name || code,
+      }, issuedAt);
       window.location.replace(destination);
     } catch (requestError) {
-      clearTeacherToken();
-      clearWordSession();
-      clearProfileTeacherToken();
       setError(
         requestError instanceof Error
           ? requestError.message
@@ -132,7 +112,7 @@ export function TeacherWorkbenchLogin() {
           </p>
           <h1 className="serif mt-2 text-3xl font-bold">教师统一登录</h1>
           <p className="mt-3 leading-7 text-[#687168]">
-            登录一次，分别查看学期主线数据和各单元活动数据。
+            登录一次，即可在课堂工作台和单词跟读管理之间切换。
           </p>
         </div>
         <form onSubmit={submit} className="space-y-5 px-7 py-7">
@@ -146,9 +126,17 @@ export function TeacherWorkbenchLogin() {
                 className="focus-ring h-13 w-full appearance-none rounded-2xl border border-[#d9c4b2] bg-[#fffaf6] pl-12 pr-4"
               >
                 {TEACHER_OPTIONS.map(({ code, label }) => <option key={code} value={code}>{label}</option>)}
+                {wordDestination && <option value="other">其他单词跟读账号</option>}
               </select>
             </span>
           </label>
+          {wordOnly && (
+            <label className="grid gap-2 text-sm font-bold">
+              单词跟读教师代码
+              <input required value={otherCode} onChange={(event) => setOtherCode(event.target.value)} autoComplete="username"
+                className="focus-ring h-13 rounded-2xl border border-[#d9c4b2] bg-[#fffaf6] px-4" />
+            </label>
+          )}
           <label className="grid gap-2 text-sm font-bold">
             <span>密码</span>
             <span className="relative block">
@@ -173,7 +161,7 @@ export function TeacherWorkbenchLogin() {
             </p>
           )}
           <button
-            disabled={loading || !password}
+            disabled={loading || !password || (wordOnly && !otherCode.trim())}
             className="focus-ring flex w-full items-center justify-center gap-2 rounded-2xl bg-[#416b36] px-5 py-3.5 font-black text-white disabled:opacity-55"
           >
             {loading ? (
@@ -181,7 +169,7 @@ export function TeacherWorkbenchLogin() {
             ) : (
               <ShieldCheck className="h-5 w-5" />
             )}
-            {loading ? '正在连接三个数据端…' : '进入统一数据中心'}
+            {loading ? '正在验证…' : wordDestination ? '进入单词跟读管理' : '进入教师工作台'}
           </button>
           <a
             href={sitePath()}
@@ -189,6 +177,7 @@ export function TeacherWorkbenchLogin() {
           >
             返回学生学习平台
           </a>
+          {wordDestination && <a href={wordPath('admin')} className="block text-center text-xs text-[#687168]">管理员入口</a>}
         </form>
       </section>
     </main>
@@ -196,25 +185,28 @@ export function TeacherWorkbenchLogin() {
 }
 
 export function TeacherWorkbench() {
-  const teacherName = sessionStorage.getItem(HUB_TEACHER_KEY) || 'Teacher';
-  const ready = Boolean(getTeacherToken() && getWordToken());
+  const session = getTeacherSession();
+  const teacherName = session?.name || 'Teacher';
+  const teacherToken = session?.teacherToken || '';
   const [editor, setEditor] = useState<EditableTask | null>(null);
   const [revision, setRevision] = useState(0);
   const [teachingRole, setTeachingRole] = useState<{ assignedClasses: string[]; canManageCourse: boolean } | null>(null);
   useEffect(() => {
-    if (!ready) location.replace(sitePath('workbench/login'));
-  }, [ready]);
+    if (!teacherToken) location.replace(sitePath('workbench/login'));
+  }, [teacherToken]);
   useEffect(() => {
-    if (!ready) return;
-    void archiveRequest<{ assignedClasses: string[]; canManageCourse: boolean }>('teacherSession', {}, getTeacherToken())
-      .then(setTeachingRole).catch(() => setTeachingRole(null));
-  }, [ready]);
-  if (!ready) return null;
-  function logout() {
-    clearTeacherToken();
-    clearWordSession();
-    clearProfileTeacherToken();
-    sessionStorage.removeItem(HUB_TEACHER_KEY);
+    if (!teacherToken) return;
+    void archiveRequest<{ assignedClasses: string[]; canManageCourse: boolean }>('teacherSession', {}, teacherToken)
+      .then(setTeachingRole).catch((error) => {
+        if (error instanceof ArchiveError && error.status === 401 && getTeacherSession()?.teacherToken === teacherToken) {
+          clearTeacherSession();
+          location.replace(sitePath('workbench/login'));
+        }
+      });
+  }, [teacherToken]);
+  if (!session) return null;
+  async function logout() {
+    await signOutTeacher();
     location.replace(sitePath('workbench/login'));
   }
   return (
@@ -239,6 +231,17 @@ export function TeacherWorkbench() {
             退出
           </button>
         </header>
+        <section aria-label="单词跟读" className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-[#d6e4d5] bg-white p-4 sm:p-5">
+          <div className="flex items-center gap-3">
+            <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#e8f3ec] text-[#416b36]"><Headphones size={23} aria-hidden="true" /></span>
+            <div><h2 className="font-bold">单词跟读</h2><p className="text-sm text-[#557467]">添加词汇、发布单元，查看学生跟读记录。</p></div>
+          </div>
+          <div className="flex flex-wrap gap-2 text-sm font-bold">
+            <a href={wordTeacherPath(true)} className="rounded-xl bg-[#416b36] px-4 py-2 text-white">添加词汇</a>
+            <a href={wordTeacherPath()} className="rounded-xl border border-[#d4ddcb] px-4 py-2">管理单元</a>
+            <a href={wordPath()} className="rounded-xl border border-[#d4ddcb] px-4 py-2">学生练习入口</a>
+          </div>
+        </section>
         <ClassroomAccess />
         <nav
           aria-label="教师快捷入口"
@@ -248,7 +251,6 @@ export function TeacherWorkbench() {
             { title: '班级档案', href: sitePath('archive/teacher') },
             { title: '每课任务与成绩', href: sitePath('archive/teacher') + '?tab=scores' },
             { title: '教师总览', href: sitePath('archive/teacher') + '?tab=overview' },
-            { title: '单词与录音', href: wordPath('teacher') },
             { title: '口语与录音', href: sitePath('teacher') },
             { title: '学生学习入口', href: sitePath() },
           ].map((item) => (

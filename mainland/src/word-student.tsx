@@ -21,6 +21,7 @@ import {
   type WordUnit,
   type WordUploadTicket,
   uploadWordAudio,
+  wordPath,
   wordRequest,
 } from './word-api';
 import { assessPronunciationRecording } from './word-audio-analysis';
@@ -651,6 +652,7 @@ export function WordStudent() {
               {error}
             </p>
           )}
+          {!queryCode && <a href={wordPath('teacher')} className="mt-6 inline-block text-sm font-bold text-indigo-700">老师管理单词 →</a>}
         </section>
       </main>
     );

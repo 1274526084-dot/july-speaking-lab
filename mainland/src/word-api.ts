@@ -1,8 +1,7 @@
 import { projectSchoolPayload, projectSchoolSubmission } from '@/lib/school-classes';
+import { WORD_ROLE_KEY as ROLE_KEY, WORD_TOKEN_KEY as TOKEN_KEY, getTeacherSession } from './teacher-session';
 export const WORD_API_URL = 'https://cloudbase-d3gxxe4l88c3d5907-1431364187.ap-shanghai.app.tcloudbase.com/wordLabApi';
 
-const TOKEN_KEY = 'july-word-lab.staff-token';
-const ROLE_KEY = 'july-word-lab.staff-role';
 const siteBase = import.meta.env.BASE_URL.replace(/\/$/, '');
 
 export function wordPath(path = '') {
@@ -10,12 +9,12 @@ export function wordPath(path = '') {
   return `${siteBase}/words/${normalized}${normalized ? '/' : ''}`;
 }
 
-export function getWordToken() {
-  return window.sessionStorage.getItem(TOKEN_KEY) || '';
-}
-
-export function getWordRole() {
-  return window.sessionStorage.getItem(ROLE_KEY) || '';
+export function getWordToken(role: 'teacher' | 'admin' = 'teacher') {
+  if (role === 'teacher') {
+    const shared = getTeacherSession();
+    if (shared) return shared.wordToken;
+  }
+  return window.sessionStorage.getItem(ROLE_KEY) === role ? window.sessionStorage.getItem(TOKEN_KEY) || '' : '';
 }
 
 export function setWordSession(token: string, role: string) {
@@ -26,6 +25,12 @@ export function setWordSession(token: string, role: string) {
 export function clearWordSession() {
   window.sessionStorage.removeItem(TOKEN_KEY);
   window.sessionStorage.removeItem(ROLE_KEY);
+}
+
+export class WordApiError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+  }
 }
 
 export async function wordRequest<T>(action: string, data: Record<string, unknown> = {}, token = '') {
@@ -40,7 +45,7 @@ export async function wordRequest<T>(action: string, data: Record<string, unknow
   catch { payload = {} as T & { error?: string; message?: string; code?: string }; }
   if (!response.ok) {
     const oversize = response.status === 413 || payload.code === 'EXCEED_MAX_PAYLOAD_SIZE';
-    throw new Error(oversize ? '录音文件太大，请重新录制；读完单词后立即点“我读完了”。' : payload.error || payload.message || `请求失败（${response.status}），请稍后重试。`);
+    throw new WordApiError(oversize ? '录音文件太大，请重新录制；读完单词后立即点“我读完了”。' : payload.error || payload.message || `请求失败（${response.status}），请稍后重试。`, response.status);
   }
   return action === 'listAttempts' ? projectSchoolPayload(payload) : payload;
 }
